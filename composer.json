@@ -1,0 +1,27 @@
+{
+  "name": "solophp/application",
+  "type": "library",
+  "description": "PSR compatible PHP Application with Router",
+  "keywords": ["application","framework","psr","php","router","api"],
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "Vitaliy Olos",
+      "email": "vedastudio@gmail.com"
+    }
+  ],
+  "autoload": {
+    "psr-4": {
+      "Solo\\": "Solo/"
+    }
+  },
+  "require": {
+    "php": ">=7.4",
+    "psr/container": "^2.0",
+    "psr/http-message": "^2.0",
+    "psr/http-server-handler": "^1.0",
+    "nyholm/psr7": "^1.8"
+  },
+  "minimum-stability": "dev",
+  "prefer-stable": true
+}
