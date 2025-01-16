@@ -1,6 +1,6 @@
 # Solo Application
 
-[![Latest Version](https://img.shields.io/github/release/solophp/application.svg)](https://github.com/solophp/application/releases)
+[![Latest Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/solophp/application/releases)
 [![Software License](https://img.shields.io/badge/license-MIT-brightgreen.svg)](LICENSE)
 
 A PSR compliant application class with middleware support and routing capabilities.
@@ -35,7 +35,7 @@ use Solo\Application;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Message\ResponseInterface;
 
-$app = new Application($container);
+$app = new Application($container, $responseFactory);
 
 // Add route
 $app->get('/hello/{name}', function (ServerRequestInterface $request, ResponseInterface $response, array $args) {
@@ -55,12 +55,12 @@ $response = $app->run($request);
 ```php
 public function __construct(
     ContainerInterface $container,
-    ?ResponseFactoryInterface $responseFactory = null
+    ResponseFactoryInterface $responseFactory
 )
 ```
 
 - `$container` - PSR-11 container implementation
-- `$responseFactory` - Optional PSR-17 response factory. If not provided, will be retrieved from container.
+- `$responseFactory` - PSR-17 response factory implementation
 
 ## Middleware
 
@@ -72,10 +72,10 @@ $app->addMiddleware(new AuthMiddleware($container));
 ```
 
 Middleware can be added as either:
-- Class name (string)
+- Class name (will be resolved through container)
 - Object instance
 
-Class name middleware will be instantiated via container.
+Note: All middleware must be valid objects implementing middleware interface.
 
 ## Routing
 
@@ -102,7 +102,7 @@ The following exceptions may be thrown:
 
 - `ContainerExceptionInterface` - Error retrieving service from container
 - `NotFoundExceptionInterface` - Service not found in container
-- `InvalidArgumentException` - Invalid route handler
+- `InvalidArgumentException` - Invalid route handler or middleware
 
 ## License
 

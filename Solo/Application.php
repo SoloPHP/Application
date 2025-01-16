@@ -12,46 +12,61 @@ use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 use InvalidArgumentException;
 
-class Application extends RouteCollector implements RequestHandlerInterface
+/**
+ * Main application class for handling routes, middlewares, and requests.
+ */
+final class Application extends RouteCollector implements RequestHandlerInterface
 {
+    /**
+     * @var int Current index of the middleware pipeline.
+     */
     private int $index = 0;
-    private array $middlewares = [];
-    private ResponseFactoryInterface $responseFactory;
-    private ContainerInterface $container;
 
     /**
-     * @throws ContainerExceptionInterface
-     * @throws NotFoundExceptionInterface
+     * @var array List of middleware instances.
+     */
+    private array $middlewares = [];
+
+    /**
+     * @param ContainerInterface $container Dependency injection container for resolving services.
+     * @param ResponseFactoryInterface $responseFactory PSR-17 Response Factory implementation (optional).
      */
     public function __construct(
-        ContainerInterface        $container,
-        ?ResponseFactoryInterface $responseFactory = null
+        private readonly ContainerInterface       $container,
+        private readonly ResponseFactoryInterface $responseFactory
     )
     {
-        $this->container = $container;
-        $this->responseFactory = $responseFactory ?? $container->get(ResponseFactoryInterface::class);
     }
 
     /**
      * Adds middleware to the application pipeline.
      *
-     * @param object|string $middleware Middleware class name or instance
+     * @param object|string $middleware Middleware class name or instance.
+     * @throws ContainerExceptionInterface If there was an error while retrieving the service.
+     * @throws NotFoundExceptionInterface If no entry was found for the identifier.
+     * @throws InvalidArgumentException If the middleware is not valid.
      */
     public function addMiddleware(object|string $middleware): void
     {
-        $this->middlewares[] = is_string($middleware)
-            ? new $middleware($this->container)
-            : $middleware;
+        if (is_string($middleware)) {
+            $middleware = $this->container->get($middleware);
+        }
+
+        if (!is_object($middleware)) {
+            throw new InvalidArgumentException('Middleware must be an object or a class name.');
+        }
+
+        $this->middlewares[] = $middleware;
     }
 
     /**
      * Runs the application with the given request.
      *
-     * @param ServerRequestInterface $request PSR-7 server request
-     * @return ResponseInterface PSR-7 response
-     * @throws ContainerExceptionInterface if there was an error while retrieving the service
-     * @throws NotFoundExceptionInterface no entry was found for the identifier
-     * @throws InvalidArgumentException when route handler is invalid
+     * @param ServerRequestInterface $request PSR-7 server request.
+     * @return ResponseInterface PSR-7 response.
+     * @throws ContainerExceptionInterface If there was an error while retrieving the service.
+     * @throws NotFoundExceptionInterface If no entry was found for the identifier.
+     * @throws InvalidArgumentException If the route handler is invalid.
      */
     public function run(ServerRequestInterface $request): ResponseInterface
     {
@@ -69,31 +84,33 @@ class Application extends RouteCollector implements RequestHandlerInterface
     }
 
     /**
-     * Handles the request through middleware pipeline.
+     * Handles the request through the middleware pipeline.
      *
-     * @param ServerRequestInterface $request PSR-7 server request
-     * @return ResponseInterface PSR-7 response
-     * @throws ContainerExceptionInterface if there was an error while retrieving the service
-     * @throws NotFoundExceptionInterface no entry was found for the identifier
-     * @throws InvalidArgumentException when route handler is invalid
+     * @param ServerRequestInterface $request PSR-7 server request.
+     * @return ResponseInterface PSR-7 response.
+     * @throws ContainerExceptionInterface If there was an error while retrieving the service.
+     * @throws NotFoundExceptionInterface If no entry was found for the identifier.
+     * @throws InvalidArgumentException If the route handler is invalid.
      */
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
         if (!isset($this->middlewares[$this->index])) {
             return $this->routeDispatcher($request);
         }
+
         $this->index++;
+
         return $this->middlewares[$this->index - 1]->process($request, $this);
     }
 
     /**
      * Dispatches the route handler.
      *
-     * @param ServerRequestInterface $request PSR-7 server request
-     * @return ResponseInterface PSR-7 response
-     * @throws InvalidArgumentException when handler is invalid
-     * @throws ContainerExceptionInterface if there was an error while retrieving the service
-     * @throws NotFoundExceptionInterface no entry was found for the identifier
+     * @param ServerRequestInterface $request PSR-7 server request.
+     * @return ResponseInterface PSR-7 response.
+     * @throws InvalidArgumentException If the handler is invalid.
+     * @throws ContainerExceptionInterface If there was an error while retrieving the service.
+     * @throws NotFoundExceptionInterface If no entry was found for the identifier.
      */
     private function routeDispatcher(ServerRequestInterface $request): ResponseInterface
     {
@@ -111,6 +128,6 @@ class Application extends RouteCollector implements RequestHandlerInterface
             return $handler($request, $response, $routeInfo['args']);
         }
 
-        throw new InvalidArgumentException('Invalid route handler');
+        throw new InvalidArgumentException('Invalid route handler.');
     }
 }
