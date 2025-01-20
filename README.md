@@ -94,7 +94,44 @@ $app->post('/api/users', [UserController::class, 'create']);
 // Route with middleware
 $app->get('/admin/dashboard', [DashboardController::class, 'index'])
     ->addMiddleware(AdminAuthMiddleware::class);
+
+// Route with page attribute
+$app->get('/blog/{slug}', [BlogController::class, 'show'], [], 'blog.show');
+
+// Route group with common prefix and middleware
+$app->group('/admin', function($app) {
+    $app->get('/users', [AdminController::class, 'users']);
+    $app->get('/settings', [AdminController::class, 'settings']);
+}, [AdminAuthMiddleware::class]);
 ```
+
+### Route Information
+
+Inside your handlers, you can access the matched route information through the request's 'route' attribute:
+
+```php
+public function handle(ServerRequestInterface $request): ResponseInterface 
+{
+    $route = $request->getAttribute('route');
+    // $route contains: method, group, handler, args, middleware, page
+    
+    // Example: access the page attribute
+    $currentPage = $route['page'] ?? null;
+    
+    // Example: check current route group
+    $isAdmin = str_starts_with($route['group'], '/admin');
+    
+    // ...
+}
+```
+
+The route attribute contains all information about the matched route, including:
+- `method` - HTTP method
+- `group` - Route group prefix
+- `handler` - Route handler
+- `args` - Route parameters
+- `middleware` - Route middleware
+- `page` - Optional page identifier
 
 ## Exception Handling
 
