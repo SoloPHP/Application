@@ -82,14 +82,17 @@ Note: All middleware must be valid objects implementing middleware interface.
 The application extends `RouteCollector` and provides standard routing methods:
 
 ```php
+ // Route with controller
+$app->post('/api/users', [UserController::class, 'create']);
+
+// Route with callable controller
+$app->post('/api/users', UserController::class);
+
 // Route with callback
 $app->get('/api/users', function ($request, $response) {
     // Handle request
     return $response;
 });
-
-// Route with controller
-$app->post('/api/users', [UserController::class, 'create']);
 
 // Route with middleware
 $app->get('/admin/dashboard', [DashboardController::class, 'index'])

@@ -118,6 +118,11 @@ final class Application extends RouteCollector implements RequestHandlerInterfac
         $response = $this->responseFactory->createResponse();
         $handler = $route['handler'];
 
+        if (is_string($handler)) {
+            $controller = $this->container->get($handler);
+            return $controller($request, $response, $route['args']);
+        }
+
         if (is_array($handler) && count($handler) === 2) {
             $controller = $this->container->get($handler[0]);
             $method = $handler[1];
