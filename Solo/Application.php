@@ -70,15 +70,15 @@ final class Application extends RouteCollector implements RequestHandlerInterfac
      */
     public function run(ServerRequestInterface $request): ResponseInterface
     {
-        $routeInfo = $this->matchRoute($request->getMethod(), $request->getUri()->getPath());
+        $route = $this->matchRoute($request->getMethod(), $request->getUri()->getPath());
 
-        if ($routeInfo === false) {
+        if ($route === false) {
             return $this->responseFactory->createResponse(404);
         }
 
-        array_map([$this, 'addMiddleware'], $routeInfo['middleware']);
+        array_map([$this, 'addMiddleware'], $route['middleware']);
 
-        $request = $request->withAttribute('routeInfo', $routeInfo);
+        $request = $request->withAttribute('route', $route);
 
         return $this->handle($request);
     }
@@ -114,18 +114,18 @@ final class Application extends RouteCollector implements RequestHandlerInterfac
      */
     private function routeDispatcher(ServerRequestInterface $request): ResponseInterface
     {
-        $routeInfo = $request->getAttribute('routeInfo');
+        $route = $request->getAttribute('route');
         $response = $this->responseFactory->createResponse();
-        $handler = $routeInfo['handler'];
+        $handler = $route['handler'];
 
         if (is_array($handler) && count($handler) === 2) {
             $controller = $this->container->get($handler[0]);
             $method = $handler[1];
-            return $controller->$method($request, $response, $routeInfo['args']);
+            return $controller->$method($request, $response, $route['args']);
         }
 
         if (is_callable($handler)) {
-            return $handler($request, $response, $routeInfo['args']);
+            return $handler($request, $response, $route['args']);
         }
 
         throw new InvalidArgumentException('Invalid route handler.');
