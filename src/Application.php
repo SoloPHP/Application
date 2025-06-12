@@ -1,16 +1,16 @@
 <?php declare(strict_types=1);
 
-namespace Solo;
+namespace Solo\Application;
 
-use Solo\Router\RouteCollector;
+use InvalidArgumentException;
 use Psr\Container\ContainerExceptionInterface;
-use Psr\Container\NotFoundExceptionInterface;
 use Psr\Container\ContainerInterface;
+use Psr\Container\NotFoundExceptionInterface;
+use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
-use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Server\RequestHandlerInterface;
-use InvalidArgumentException;
+use Solo\Router\RouteCollector;
 
 /**
  * Main application class for handling routes, middlewares, and requests.
@@ -28,12 +28,16 @@ final class Application extends RouteCollector implements RequestHandlerInterfac
     private array $middlewares = [];
 
     /**
-     * @param ContainerInterface $container Dependency injection container for resolving services.
-     * @param ResponseFactoryInterface $responseFactory PSR-17 Response Factory implementation (optional).
+     * Constructor for the Application class.
+     *
+     * @param ContainerInterface $container Dependency injection container.
+     * @param ResponseFactoryInterface $responseFactory Factory for creating responses.
+     * @param CorsHandlerInterface|null $corsHandler Optional CORS handler for API requests.
      */
     public function __construct(
         private readonly ContainerInterface       $container,
-        private readonly ResponseFactoryInterface $responseFactory
+        private readonly ResponseFactoryInterface $responseFactory,
+        private readonly ?CorsHandlerInterface    $corsHandler = null
     )
     {
     }
@@ -70,6 +74,15 @@ final class Application extends RouteCollector implements RequestHandlerInterfac
      */
     public function run(ServerRequestInterface $request): ResponseInterface
     {
+        // OPTIONS request handling for CORS
+        if ($request->getMethod() === 'OPTIONS' &&
+            $this->corsHandler &&
+            $this->corsHandler->shouldApplyCors($request)) {
+
+            $response = $this->responseFactory->createResponse(200);
+            return $this->corsHandler->addCorsHeaders($response, $request);
+        }
+
         $route = $this->matchRoute($request->getMethod(), $request->getUri()->getPath());
 
         if ($route === false) {

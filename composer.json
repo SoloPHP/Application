@@ -21,7 +21,7 @@
   ],
   "autoload": {
     "psr-4": {
-      "Solo\\": "Solo/"
+      "Solo\\Application\\": "src/"
     }
   },
   "require": {
@@ -30,7 +30,7 @@
     "psr/http-message": "^2.0",
     "psr/http-server-handler": "^1.0",
     "psr/http-factory": "^1.0",
-    "solophp/router": "^1.0"
+    "solophp/router": "^1.1"
   },
   "minimum-stability": "dev",
   "prefer-stable": true

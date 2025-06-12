@@ -3,7 +3,7 @@
 [![Latest Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/solophp/application/releases)
 [![Software License](https://img.shields.io/badge/license-MIT-brightgreen.svg)](LICENSE)
 
-A PSR compliant application class with middleware support and routing capabilities.
+A PSR compliant application class with middleware support, routing capabilities, and CORS handling.
 
 ## Requirements
 
@@ -31,7 +31,8 @@ composer require solophp/application
 ## Basic Usage
 
 ```php
-use Solo\Application;
+use Solo\Application\Application;
+use Solo\Application\CorsHandlerInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Message\ResponseInterface;
 
@@ -55,12 +56,48 @@ $response = $app->run($request);
 ```php
 public function __construct(
     ContainerInterface $container,
-    ResponseFactoryInterface $responseFactory
+    ResponseFactoryInterface $responseFactory,
+    ?CorsHandlerInterface $corsHandler = null
 )
 ```
 
 - `$container` - PSR-11 container implementation
 - `$responseFactory` - PSR-17 response factory implementation
+- `$corsHandler` - Optional CORS handler for API requests
+
+## CORS Support
+
+The application includes built-in CORS (Cross-Origin Resource Sharing) support through an optional CORS handler:
+
+```php
+use Solo\Application\Application;
+use Solo\Application\CorsHandlerInterface;
+
+// Create your CORS handler implementation
+class MyCorsHandler implements CorsHandlerInterface
+{
+    public function shouldApplyCors(ServerRequestInterface $request): bool
+    {
+        // Your logic to determine if CORS should be applied
+        return true;
+    }
+
+    public function addCorsHeaders(ResponseInterface $response, ServerRequestInterface $request): ResponseInterface
+    {
+        // Add appropriate CORS headers
+        return $response
+            ->withHeader('Access-Control-Allow-Origin', '*')
+            ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+            ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    }
+}
+
+// Initialize application with CORS handler
+$corsHandler = new MyCorsHandler();
+$app = new Application($container, $responseFactory, $corsHandler);
+```
+
+The application automatically handles OPTIONS requests when a CORS handler is provided, returning appropriate CORS headers without requiring explicit route definitions.
 
 ## Middleware
 
@@ -135,6 +172,39 @@ The route attribute contains all information about the matched route, including:
 - `args` - Route parameters
 - `middleware` - Route middleware
 - `page` - Optional page identifier
+
+## CORS Handler Interface
+
+If you need to implement custom CORS handling, implement the `CorsHandlerInterface`:
+
+```php
+use Solo\Application\CorsHandlerInterface;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+
+class CustomCorsHandler implements CorsHandlerInterface
+{
+    public function shouldApplyCors(ServerRequestInterface $request): bool
+    {
+        // Implement your logic to determine when CORS should be applied
+        // For example, check if request has an Origin header
+        return $request->hasHeader('Origin');
+    }
+
+    public function addCorsHeaders(ResponseInterface $response, ServerRequestInterface $request): ResponseInterface
+    {
+        $origin = $request->getHeaderLine('Origin');
+        
+        // Add CORS headers based on your requirements
+        return $response
+            ->withHeader('Access-Control-Allow-Origin', $origin)
+            ->withHeader('Access-Control-Allow-Credentials', 'true')
+            ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+            ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
+            ->withHeader('Access-Control-Max-Age', '86400');
+    }
+}
+```
 
 ## Exception Handling
 
