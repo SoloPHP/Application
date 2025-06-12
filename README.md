@@ -1,6 +1,6 @@
 # Solo Application
 
-[![Latest Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/solophp/application/releases)
+[![Latest Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/solophp/application/releases)
 [![Software License](https://img.shields.io/badge/license-MIT-brightgreen.svg)](LICENSE)
 
 A PSR compliant application class with middleware support, routing capabilities, and CORS handling.
