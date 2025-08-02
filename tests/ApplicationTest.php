@@ -15,7 +15,7 @@ use Psr\Http\Message\UriInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Solo\Application\Application;
 use Solo\Application\CorsHandlerInterface;
-use Solo\Application\RouterInterface;
+use Solo\Router\RouterInterface;
 use TypeError;
 
 class ApplicationTest extends TestCase
@@ -300,31 +300,5 @@ class ApplicationTest extends TestCase
         $this->application->handle($request);
     }
 
-    public function testRouterDelegationMethods(): void
-    {
-        $handler = function () {
-        };
-        $middleware = ['TestMiddleware'];
-        $page = 'test.page';
 
-        $this->router->shouldReceive('addRoute')
-            ->with('GET', '/test', $handler, $middleware, $page)
-            ->once();
-
-        $result = $this->application->get('/test', $handler, $middleware, $page);
-        $this->assertSame($this->application, $result);
-    }
-
-    public function testGetRoutes(): void
-    {
-        $routes = [
-            ['method' => 'GET', 'path' => '/test']
-        ];
-
-        $this->router->shouldReceive('getRoutes')
-            ->andReturn($routes);
-
-        $result = $this->application->getRoutes();
-        $this->assertSame($routes, $result);
-    }
 }

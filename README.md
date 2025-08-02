@@ -33,7 +33,7 @@ composer require solophp/application
 
 ## Router Implementation
 
-This package requires a router implementation that implements `Solo\Application\RouterInterface`. 
+This package requires a router implementation that implements `Solo\Router\RouterInterface`. 
 We recommend using [solophp/router](https://github.com/solophp/router):
 
 ```bash
@@ -55,8 +55,8 @@ $router = new RouteCollector();
 // Create application with router
 $app = new Application($router, $container, $responseFactory);
 
-// Add route
-$app->get('/hello/{name}', function (ServerRequestInterface $request, ResponseInterface $response, array $args) {
+// Add routes directly to router
+$router->get('/hello/{name}', function (ServerRequestInterface $request, ResponseInterface $response, array $args) {
     $response->getBody()->write("Hello, {$args['name']}!");
     return $response;
 });
@@ -79,20 +79,21 @@ public function __construct(
 )
 ```
 
-- `$router` - Router implementation that implements `RouterInterface`
+- `$router` - Router implementation that implements `Solo\Router\RouterInterface`
 - `$container` - PSR-11 container implementation
 - `$responseFactory` - PSR-17 response factory implementation
 - `$corsHandler` - Optional CORS handler for API requests
 
 ## Router Interface
 
-The application works with any router implementation that implements `Solo\Application\RouterInterface`:
+The application works with any router implementation that implements `Solo\Router\RouterInterface`:
 
 ```php
 interface RouterInterface
 {
     public function addRoute(
         string $method,
+        string $group,
         string $path,
         callable|array|string $handler,
         array $middleware = [],
@@ -111,11 +112,36 @@ This allows you to use any router implementation or create your own.
 
 The application includes built-in CORS (Cross-Origin Resource Sharing) support through an optional CORS handler:
 
+### Using the Default CORS Handler
+
+The package provides a ready-to-use `CorsHandler` implementation:
+
 ```php
 use Solo\Application\Application;
+use Solo\Application\CorsHandler;
+
+// Basic CORS with default settings (allows all origins)
+$corsHandler = new CorsHandler();
+$app = new Application($router, $container, $responseFactory, $corsHandler);
+
+// Custom CORS configuration
+$corsHandler = new CorsHandler(
+    allowedOrigins: ['http://localhost:3000', 'https://myapp.com'],
+    allowedMethods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    allowCredentials: true,
+    maxAge: 3600
+);
+$app = new Application($router, $container, $responseFactory, $corsHandler);
+```
+
+### Custom CORS Handler
+
+You can also implement your own CORS handler:
+
+```php
 use Solo\Application\CorsHandlerInterface;
 
-// Create your CORS handler implementation
 class MyCorsHandler implements CorsHandlerInterface
 {
     public function shouldApplyCors(ServerRequestInterface $request): bool
@@ -134,7 +160,6 @@ class MyCorsHandler implements CorsHandlerInterface
     }
 }
 
-// Initialize application with CORS handler
 $corsHandler = new MyCorsHandler();
 $app = new Application($router, $container, $responseFactory, $corsHandler);
 ```

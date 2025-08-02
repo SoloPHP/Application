@@ -13,6 +13,7 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Solo\Router\RouterInterface;
 
 /**
  * Main application class for handling routes, middlewares, and requests.
@@ -156,78 +157,5 @@ final class Application implements RequestHandlerInterface
         throw new InvalidArgumentException('Invalid route handler.');
     }
 
-    // Router delegation methods
 
-    /**
-     * Adds a GET route.
-     */
-    public function get(
-        string $path,
-        callable|array|string $handler,
-        array $middleware = [],
-        ?string $page = null
-    ): self {
-        $this->router->addRoute('GET', $path, $handler, $middleware, $page);
-        return $this;
-    }
-
-    /**
-     * Adds a POST route.
-     */
-    public function post(
-        string $path,
-        callable|array|string $handler,
-        array $middleware = [],
-        ?string $page = null
-    ): self {
-        $this->router->addRoute('POST', $path, $handler, $middleware, $page);
-        return $this;
-    }
-
-    /**
-     * Adds a PUT route.
-     */
-    public function put(
-        string $path,
-        callable|array|string $handler,
-        array $middleware = [],
-        ?string $page = null
-    ): self {
-        $this->router->addRoute('PUT', $path, $handler, $middleware, $page);
-        return $this;
-    }
-
-    /**
-     * Adds a PATCH route.
-     */
-    public function patch(
-        string $path,
-        callable|array|string $handler,
-        array $middleware = [],
-        ?string $page = null
-    ): self {
-        $this->router->addRoute('PATCH', $path, $handler, $middleware, $page);
-        return $this;
-    }
-
-    /**
-     * Adds a DELETE route.
-     */
-    public function delete(
-        string $path,
-        callable|array|string $handler,
-        array $middleware = [],
-        ?string $page = null
-    ): self {
-        $this->router->addRoute('DELETE', $path, $handler, $middleware, $page);
-        return $this;
-    }
-
-    /**
-     * Gets all registered routes.
-     */
-    public function getRoutes(): array
-    {
-        return $this->router->getRoutes();
-    }
 }
