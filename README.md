@@ -3,8 +3,7 @@
 [![Latest Version on Packagist](https://img.shields.io/packagist/v/solophp/application.svg)](https://packagist.org/packages/solophp/application)
 [![License](https://img.shields.io/packagist/l/solophp/application.svg)](https://github.com/solophp/application/blob/main/LICENSE)
 [![PHP Version](https://img.shields.io/packagist/php-v/solophp/application.svg)](https://packagist.org/packages/solophp/application)
-[![Tests](https://github.com/solophp/application/workflows/Tests/badge.svg)](https://github.com/solophp/application/actions)
-[![Code Coverage](https://img.shields.io/codecov/c/github/solophp/application)](https://codecov.io/gh/solophp/application)
+
 
 A PSR compliant application class with middleware support, routing capabilities, and CORS handling.
 
