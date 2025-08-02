@@ -1,7 +1,10 @@
 # Solo Application
 
-[![Latest Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/solophp/application/releases)
-[![Software License](https://img.shields.io/badge/license-MIT-brightgreen.svg)](LICENSE)
+[![Latest Version on Packagist](https://img.shields.io/packagist/v/solophp/application.svg)](https://packagist.org/packages/solophp/application)
+[![License](https://img.shields.io/packagist/l/solophp/application.svg)](https://github.com/solophp/application/blob/main/LICENSE)
+[![PHP Version](https://img.shields.io/packagist/php-v/solophp/application.svg)](https://packagist.org/packages/solophp/application)
+[![Tests](https://github.com/solophp/application/workflows/Tests/badge.svg)](https://github.com/solophp/application/actions)
+[![Code Coverage](https://img.shields.io/codecov/c/github/solophp/application)](https://codecov.io/gh/solophp/application)
 
 A PSR compliant application class with middleware support, routing capabilities, and CORS handling.
 
@@ -11,6 +14,7 @@ A PSR compliant application class with middleware support, routing capabilities,
 - PSR-7 HTTP message interfaces implementation
 - PSR-11 container implementation
 - PSR-17 HTTP factory implementation
+- Router implementation that implements `Solo\Application\RouterInterface`
 
 ## Installation
 
@@ -25,18 +29,32 @@ composer require solophp/application
 - [psr/container](https://github.com/php-fig/container) ^2.0
 - [psr/http-message](https://github.com/php-fig/http-message) ^2.0
 - [psr/http-server-handler](https://github.com/php-fig/http-server-handler) ^1.0
+- [psr/http-server-middleware](https://github.com/php-fig/http-server-middleware) ^1.0
 - [psr/http-factory](https://github.com/php-fig/http-factory) ^1.0
-- [solophp/router](https://github.com/solophp/router) ^1.0
+
+## Router Implementation
+
+This package requires a router implementation that implements `Solo\Application\RouterInterface`. 
+We recommend using [solophp/router](https://github.com/solophp/router):
+
+```bash
+composer require solophp/router
+```
 
 ## Basic Usage
 
 ```php
 use Solo\Application\Application;
 use Solo\Application\CorsHandlerInterface;
+use Solo\Router\RouteCollector;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Message\ResponseInterface;
 
-$app = new Application($container, $responseFactory);
+// Create router implementation
+$router = new RouteCollector();
+
+// Create application with router
+$app = new Application($router, $container, $responseFactory);
 
 // Add route
 $app->get('/hello/{name}', function (ServerRequestInterface $request, ResponseInterface $response, array $args) {
@@ -55,15 +73,40 @@ $response = $app->run($request);
 
 ```php
 public function __construct(
+    RouterInterface $router,
     ContainerInterface $container,
     ResponseFactoryInterface $responseFactory,
     ?CorsHandlerInterface $corsHandler = null
 )
 ```
 
+- `$router` - Router implementation that implements `RouterInterface`
 - `$container` - PSR-11 container implementation
 - `$responseFactory` - PSR-17 response factory implementation
 - `$corsHandler` - Optional CORS handler for API requests
+
+## Router Interface
+
+The application works with any router implementation that implements `Solo\Application\RouterInterface`:
+
+```php
+interface RouterInterface
+{
+    public function addRoute(
+        string $method,
+        string $path,
+        callable|array|string $handler,
+        array $middleware = [],
+        ?string $page = null
+    ): void;
+
+    public function matchRoute(string $requestMethod, string $url): array|false;
+
+    public function getRoutes(): array;
+}
+```
+
+This allows you to use any router implementation or create your own.
 
 ## CORS Support
 
@@ -94,7 +137,7 @@ class MyCorsHandler implements CorsHandlerInterface
 
 // Initialize application with CORS handler
 $corsHandler = new MyCorsHandler();
-$app = new Application($container, $responseFactory, $corsHandler);
+$app = new Application($router, $container, $responseFactory, $corsHandler);
 ```
 
 The application automatically handles OPTIONS requests when a CORS handler is provided, returning appropriate CORS headers without requiring explicit route definitions.
@@ -116,7 +159,7 @@ Note: All middleware must be valid objects implementing middleware interface.
 
 ## Routing
 
-The application extends `RouteCollector` and provides standard routing methods:
+The application provides convenient routing methods that delegate to the router implementation:
 
 ```php
  // Route with controller
@@ -137,12 +180,6 @@ $app->get('/admin/dashboard', [DashboardController::class, 'index'])
 
 // Route with page attribute
 $app->get('/blog/{slug}', [BlogController::class, 'show'], [], 'blog.show');
-
-// Route group with common prefix and middleware
-$app->group('/admin', function($app) {
-    $app->get('/users', [AdminController::class, 'users']);
-    $app->get('/settings', [AdminController::class, 'settings']);
-}, [AdminAuthMiddleware::class]);
 ```
 
 ### Route Information
@@ -204,6 +241,30 @@ class CustomCorsHandler implements CorsHandlerInterface
             ->withHeader('Access-Control-Max-Age', '86400');
     }
 }
+```
+
+## Development
+
+### Running Tests
+
+```bash
+# Run tests
+composer test
+
+# Run tests with coverage
+composer test-coverage
+
+# Run code style check
+composer cs
+
+# Fix code style issues
+composer cs-fix
+
+# Run static analysis
+composer stan
+
+# Run all checks
+composer check
 ```
 
 ## Exception Handling
