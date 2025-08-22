@@ -13,7 +13,7 @@ A PSR compliant application class with middleware support, routing capabilities,
 - PSR-7 HTTP message interfaces implementation
 - PSR-11 container implementation
 - PSR-17 HTTP factory implementation
-- Router implementation that implements `Solo\Application\RouterInterface`
+- Router implementation that implements `Solo\Router\RouterInterface`
 
 ## Installation
 
@@ -96,12 +96,16 @@ interface RouterInterface
         string $group,
         string $path,
         callable|array|string $handler,
-        array $middleware = [],
-        ?string $page = null
+        array $middlewares = [],
+        ?string $name = null
     ): void;
 
-    public function matchRoute(string $requestMethod, string $url): array|false;
+    /**
+     * Returns MatchResult with `route` and `args` on success, or false if not matched
+     */
+    public function matchRoute(string $requestMethod, string $url): MatchResult|false;
 
+    /** @return array<Route> */
     public function getRoutes(): array;
 }
 ```
@@ -213,14 +217,12 @@ Inside your handlers, you can access the matched route information through the r
 ```php
 public function handle(ServerRequestInterface $request): ResponseInterface 
 {
+    /** @var Solo\Router\Route $route */
     $route = $request->getAttribute('route');
-    // $route contains: method, group, handler, args, middleware, page
-    
-    // Example: access the page attribute
-    $currentPage = $route['page'] ?? null;
-    
-    // Example: check current route group
-    $isAdmin = str_starts_with($route['group'], '/admin');
+    $args = $request->getAttribute('routeArgs', []);
+    // $route has readonly properties: method, group, path, handler, middlewares, name
+    $currentRouteName = $route->name;
+    $isAdmin = str_starts_with($route->group, '/admin');
     
     // ...
 }

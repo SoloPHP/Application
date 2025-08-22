@@ -158,4 +158,4 @@ class CorsHandlerTest extends TestCase
 
         $this->assertSame($response, $result);
     }
-} 
+}

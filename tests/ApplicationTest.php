@@ -16,6 +16,8 @@ use Psr\Http\Server\MiddlewareInterface;
 use Solo\Application\Application;
 use Solo\Application\CorsHandlerInterface;
 use Solo\Router\RouterInterface;
+use Solo\Router\MatchResult;
+use Solo\Router\Route;
 use TypeError;
 
 class ApplicationTest extends TestCase
@@ -148,29 +150,29 @@ class ApplicationTest extends TestCase
         $uri->shouldReceive('getPath')->andReturn('/test');
         $request->shouldReceive('getUri')->andReturn($uri);
 
-        $route = [
-            'method' => 'GET',
-            'group' => '',
-            'handler' => function ($req, $resp, $args) {
-                return $resp;
-            },
-            'args' => [],
-            'middleware' => [],
-            'page' => null
-        ];
+        $route = new Route('GET', '', '/test', function ($req, $resp, $args) {
+            return $resp;
+        }, [], null);
+        $match = new MatchResult($route, []);
 
         $this->router->shouldReceive('matchRoute')
             ->with('GET', '/test')
-            ->andReturn($route);
+            ->andReturn($match);
 
         $modifiedRequest = Mockery::mock(ServerRequestInterface::class);
         $request->shouldReceive('withAttribute')
             ->with('route', $route)
+            ->andReturnSelf();
+        $request->shouldReceive('withAttribute')
+            ->with('routeArgs', [])
             ->andReturn($modifiedRequest);
 
         $modifiedRequest->shouldReceive('getAttribute')
             ->with('route')
             ->andReturn($route);
+        $modifiedRequest->shouldReceive('getAttribute')
+            ->with('routeArgs', [])
+            ->andReturn([]);
 
         $response = Mockery::mock(ResponseInterface::class);
         $this->responseFactory->shouldReceive('createResponse')
@@ -183,14 +185,15 @@ class ApplicationTest extends TestCase
     public function testHandleWithNoMiddleware(): void
     {
         $request = Mockery::mock(ServerRequestInterface::class);
+        $route = new Route('GET', '', '/x', function ($req, $resp, $args) {
+            return $resp;
+        }, [], null);
         $request->shouldReceive('getAttribute')
             ->with('route')
-            ->andReturn([
-                'handler' => function ($req, $resp, $args) {
-                    return $resp;
-                },
-                'args' => []
-            ]);
+            ->andReturn($route);
+        $request->shouldReceive('getAttribute')
+            ->with('routeArgs', [])
+            ->andReturn([]);
 
         $response = Mockery::mock(ResponseInterface::class);
         $this->responseFactory->shouldReceive('createResponse')
@@ -206,14 +209,15 @@ class ApplicationTest extends TestCase
         $this->application->addMiddleware($middleware);
 
         $request = Mockery::mock(ServerRequestInterface::class);
+        $route = new Route('GET', '', '/x', function ($req, $resp, $args) {
+            return $resp;
+        }, [], null);
         $request->shouldReceive('getAttribute')
             ->with('route')
-            ->andReturn([
-                'handler' => function ($req, $resp, $args) {
-                    return $resp;
-                },
-                'args' => []
-            ]);
+            ->andReturn($route);
+        $request->shouldReceive('getAttribute')
+            ->with('routeArgs', [])
+            ->andReturn([]);
 
         $response = Mockery::mock(ResponseInterface::class);
         $this->responseFactory->shouldReceive('createResponse')
@@ -230,12 +234,13 @@ class ApplicationTest extends TestCase
     public function testRouteDispatcherWithStringHandler(): void
     {
         $request = Mockery::mock(ServerRequestInterface::class);
+        $route = new Route('GET', '', '/x', 'TestController', [], null);
         $request->shouldReceive('getAttribute')
             ->with('route')
-            ->andReturn([
-                'handler' => 'TestController',
-                'args' => []
-            ]);
+            ->andReturn($route);
+        $request->shouldReceive('getAttribute')
+            ->with('routeArgs', [])
+            ->andReturn([]);
 
         $response = Mockery::mock(ResponseInterface::class);
         $this->responseFactory->shouldReceive('createResponse')
@@ -256,12 +261,13 @@ class ApplicationTest extends TestCase
     public function testRouteDispatcherWithArrayHandler(): void
     {
         $request = Mockery::mock(ServerRequestInterface::class);
+        $route = new Route('GET', '', '/x', ['TestController', 'index'], [], null);
         $request->shouldReceive('getAttribute')
             ->with('route')
-            ->andReturn([
-                'handler' => ['TestController', 'index'],
-                'args' => []
-            ]);
+            ->andReturn($route);
+        $request->shouldReceive('getAttribute')
+            ->with('routeArgs', [])
+            ->andReturn([]);
 
         $response = Mockery::mock(ResponseInterface::class);
         $this->responseFactory->shouldReceive('createResponse')
@@ -283,12 +289,13 @@ class ApplicationTest extends TestCase
     public function testRouteDispatcherWithInvalidHandler(): void
     {
         $request = Mockery::mock(ServerRequestInterface::class);
+        $route = new Route('GET', '', '/x', null, [], null);
         $request->shouldReceive('getAttribute')
             ->with('route')
-            ->andReturn([
-                'handler' => null,
-                'args' => []
-            ]);
+            ->andReturn($route);
+        $request->shouldReceive('getAttribute')
+            ->with('routeArgs', [])
+            ->andReturn([]);
 
         $response = Mockery::mock(ResponseInterface::class);
         $this->responseFactory->shouldReceive('createResponse')
@@ -299,6 +306,4 @@ class ApplicationTest extends TestCase
 
         $this->application->handle($request);
     }
-
-
 }

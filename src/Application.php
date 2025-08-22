@@ -87,18 +87,20 @@ final class Application implements RequestHandlerInterface
             return $this->corsHandler->addCorsHeaders($response, $request);
         }
 
-        $route = $this->router->matchRoute($request->getMethod(), $request->getUri()->getPath());
+        $match = $this->router->matchRoute($request->getMethod(), $request->getUri()->getPath());
 
-        if ($route === false) {
+        if (!$match) {
             return $this->responseFactory->createResponse(404);
         }
 
         // Add route middleware to pipeline
-        foreach ($route['middleware'] as $middleware) {
+        foreach ($match->route->middlewares as $middleware) {
             $this->addMiddleware($middleware);
         }
 
-        $request = $request->withAttribute('route', $route);
+        $request = $request
+            ->withAttribute('route', $match->route)
+            ->withAttribute('routeArgs', $match->args);
 
         return $this->handle($request);
     }
@@ -136,26 +138,25 @@ final class Application implements RequestHandlerInterface
     private function routeDispatcher(ServerRequestInterface $request): ResponseInterface
     {
         $route = $request->getAttribute('route');
+        $args = $request->getAttribute('routeArgs', []);
         $response = $this->responseFactory->createResponse();
-        $handler = $route['handler'];
+        $handler = $route->handler;
 
         if (is_string($handler)) {
             $controller = $this->container->get($handler);
-            return $controller($request, $response, $route['args']);
+            return $controller($request, $response, $args);
         }
 
         if (is_array($handler) && count($handler) === 2) {
             [$controllerClass, $method] = $handler;
             $controller = $this->container->get($controllerClass);
-            return $controller->$method($request, $response, $route['args']);
+            return $controller->$method($request, $response, $args);
         }
 
         if (is_callable($handler)) {
-            return $handler($request, $response, $route['args']);
+            return $handler($request, $response, $args);
         }
 
         throw new InvalidArgumentException('Invalid route handler.');
     }
-
-
 }

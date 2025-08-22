@@ -13,10 +13,14 @@ use Psr\Http\Message\ServerRequestInterface;
 final class CorsHandler implements CorsHandlerInterface
 {
     /**
-     * @param array<string> $allowedOrigins List of allowed origins (e.g., ['http://localhost:3000', 'https://example.com'])
-     * @param array<string> $allowedMethods List of allowed HTTP methods (e.g., ['GET', 'POST', 'PUT', 'DELETE'])
-     * @param array<string> $allowedHeaders List of allowed headers (e.g., ['Content-Type', 'Authorization'])
-     * @param bool $allowCredentials Whether to allow credentials (cookies, authorization headers)
+     * @param array<string> $allowedOrigins List of allowed origins
+     *     (e.g., ['http://localhost:3000', 'https://example.com'])
+     * @param array<string> $allowedMethods List of allowed HTTP methods
+     *     (e.g., ['GET', 'POST', 'PUT', 'DELETE'])
+     * @param array<string> $allowedHeaders List of allowed headers
+     *     (e.g., ['Content-Type', 'Authorization'])
+     * @param bool $allowCredentials Whether to allow credentials
+     *     (cookies, authorization headers)
      * @param int $maxAge Cache duration for preflight requests in seconds
      */
     public function __construct(
@@ -31,7 +35,7 @@ final class CorsHandler implements CorsHandlerInterface
     public function shouldApplyCors(ServerRequestInterface $request): bool
     {
         $origin = $request->getHeaderLine('Origin');
-        
+
         // Always apply CORS if origin is present
         return $origin !== '';
     }
@@ -39,7 +43,7 @@ final class CorsHandler implements CorsHandlerInterface
     public function addCorsHeaders(ResponseInterface $response, ServerRequestInterface $request): ResponseInterface
     {
         $origin = $request->getHeaderLine('Origin');
-        
+
         if ($origin === '') {
             return $response;
         }
@@ -51,7 +55,7 @@ final class CorsHandler implements CorsHandlerInterface
 
         // Add CORS headers
         $response = $response->withHeader('Access-Control-Allow-Origin', $this->getAllowedOrigin($origin));
-        
+
         if ($this->allowCredentials) {
             $response = $response->withHeader('Access-Control-Allow-Credentials', 'true');
         }
@@ -98,4 +102,4 @@ final class CorsHandler implements CorsHandlerInterface
 
         return in_array($origin, $this->allowedOrigins, true) ? $origin : '';
     }
-} 
+}
