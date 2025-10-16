@@ -24,13 +24,41 @@
       "Solo\\Application\\": "src/"
     }
   },
+  "autoload-dev": {
+    "psr-4": {
+      "Solo\\Application\\Tests\\": "tests/"
+    }
+  },
   "require": {
     "php": ">=8.1",
     "psr/container": "^2.0",
     "psr/http-message": "^2.0",
     "psr/http-server-handler": "^1.0",
+    "psr/http-server-middleware": "^1.0",
     "psr/http-factory": "^1.0",
-    "solophp/router": "^1.1"
+    "solophp/contracts": "^1.0"
+  },
+  "suggest": {
+    "solophp/router": "Default router implementation"
+  },
+  "require-dev": {
+    "phpunit/phpunit": "^10.0",
+    "squizlabs/php_codesniffer": "^3.7",
+    "phpstan/phpstan": "^2.0",
+    "mockery/mockery": "^1.6",
+    "solophp/router": "^2.0"
+  },
+  "scripts": {
+    "test": "phpunit",
+    "test-coverage": "phpunit --coverage-html coverage",
+    "cs": "phpcs --standard=PSR12 src/ tests/",
+    "cs-fix": "phpcbf --standard=PSR12 src/ tests/",
+    "stan": "phpstan analyse src/ tests/",
+    "check": [
+      "@cs",
+      "@stan",
+      "@test"
+    ]
   },
   "minimum-stability": "dev",
   "prefer-stable": true

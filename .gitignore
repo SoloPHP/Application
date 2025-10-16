@@ -1,7 +1,41 @@
 !.gitignore
-vendor
+vendor/
 composer.lock
-example
-.idea
+example/
+.idea/
 .DS_Store
 Thumbs.db
+
+# Testing
+.phpunit.cache/
+coverage/
+.phpunit.result.cache
+
+# IDE
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+build/
+dist/
+
+# Temporary files
+*.tmp
+*.temp

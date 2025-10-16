@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 
 namespace Solo\Application;
 
@@ -9,13 +11,14 @@ use Psr\Container\NotFoundExceptionInterface;
 use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
-use Solo\Router\RouteCollector;
+use Solo\Contracts\Router\RouterInterface;
 
 /**
  * Main application class for handling routes, middlewares, and requests.
  */
-final class Application extends RouteCollector implements RequestHandlerInterface
+final class Application implements RequestHandlerInterface
 {
     /**
      * @var int Current index of the middleware pipeline.
@@ -23,41 +26,42 @@ final class Application extends RouteCollector implements RequestHandlerInterfac
     private int $index = 0;
 
     /**
-     * @var array List of middleware instances.
+     * @var array<int, MiddlewareInterface> List of middleware instances.
      */
     private array $middlewares = [];
 
     /**
      * Constructor for the Application class.
      *
+     * @param RouterInterface $router Router implementation
      * @param ContainerInterface $container Dependency injection container.
      * @param ResponseFactoryInterface $responseFactory Factory for creating responses.
      * @param CorsHandlerInterface|null $corsHandler Optional CORS handler for API requests.
      */
     public function __construct(
-        private readonly ContainerInterface       $container,
+        private readonly RouterInterface $router,
+        private readonly ContainerInterface $container,
         private readonly ResponseFactoryInterface $responseFactory,
-        private readonly ?CorsHandlerInterface    $corsHandler = null
-    )
-    {
+        private readonly ?CorsHandlerInterface $corsHandler = null
+    ) {
     }
 
     /**
      * Adds middleware to the application pipeline.
      *
-     * @param object|string $middleware Middleware class name or instance.
+     * @param MiddlewareInterface|string $middleware Middleware class name or instance.
      * @throws ContainerExceptionInterface If there was an error while retrieving the service.
      * @throws NotFoundExceptionInterface If no entry was found for the identifier.
      * @throws InvalidArgumentException If the middleware is not valid.
      */
-    public function addMiddleware(object|string $middleware): void
+    public function addMiddleware(MiddlewareInterface|string $middleware): void
     {
         if (is_string($middleware)) {
             $middleware = $this->container->get($middleware);
         }
 
-        if (!is_object($middleware)) {
-            throw new InvalidArgumentException('Middleware must be an object or a class name.');
+        if (!$middleware instanceof MiddlewareInterface) {
+            throw new InvalidArgumentException('Middleware must implement MiddlewareInterface.');
         }
 
         $this->middlewares[] = $middleware;
@@ -74,26 +78,35 @@ final class Application extends RouteCollector implements RequestHandlerInterfac
      */
     public function run(ServerRequestInterface $request): ResponseInterface
     {
-        // OPTIONS request handling for CORS
-        if ($request->getMethod() === 'OPTIONS' &&
-            $this->corsHandler &&
-            $this->corsHandler->shouldApplyCors($request)) {
-
+        if (
+            $request->getMethod() === 'OPTIONS'
+            && $this->corsHandler?->shouldApplyCors($request)
+        ) {
             $response = $this->responseFactory->createResponse(200);
             return $this->corsHandler->addCorsHeaders($response, $request);
         }
 
-        $route = $this->matchRoute($request->getMethod(), $request->getUri()->getPath());
+        $match = $this->router->match($request->getMethod(), $request->getUri()->getPath());
 
-        if ($route === false) {
+        if ($match === false) {
             return $this->responseFactory->createResponse(404);
         }
 
-        array_map([$this, 'addMiddleware'], $route['middleware']);
+        foreach ($match['middlewares'] as $middleware) {
+            $this->addMiddleware($middleware);
+        }
 
-        $request = $request->withAttribute('route', $route);
+        $request = $request
+            ->withAttribute('handler', $match['handler'])
+            ->withAttribute('params', $match['params']);
 
-        return $this->handle($request);
+        $response = $this->handle($request);
+
+        if ($this->corsHandler?->shouldApplyCors($request)) {
+            $response = $this->corsHandler->addCorsHeaders($response, $request);
+        }
+
+        return $response;
     }
 
     /**
@@ -111,9 +124,10 @@ final class Application extends RouteCollector implements RequestHandlerInterfac
             return $this->routeDispatcher($request);
         }
 
+        $middleware = $this->middlewares[$this->index];
         $this->index++;
 
-        return $this->middlewares[$this->index - 1]->process($request, $this);
+        return $middleware->process($request, $this);
     }
 
     /**
@@ -127,23 +141,23 @@ final class Application extends RouteCollector implements RequestHandlerInterfac
      */
     private function routeDispatcher(ServerRequestInterface $request): ResponseInterface
     {
-        $route = $request->getAttribute('route');
+        $handler = $request->getAttribute('handler');
+        $params = $request->getAttribute('params', []);
         $response = $this->responseFactory->createResponse();
-        $handler = $route['handler'];
 
         if (is_string($handler)) {
             $controller = $this->container->get($handler);
-            return $controller($request, $response, $route['args']);
+            return $controller($request, $response, $params);
         }
 
         if (is_array($handler) && count($handler) === 2) {
-            $controller = $this->container->get($handler[0]);
-            $method = $handler[1];
-            return $controller->$method($request, $response, $route['args']);
+            [$controllerClass, $method] = $handler;
+            $controller = $this->container->get($controllerClass);
+            return $controller->$method($request, $response, $params);
         }
 
         if (is_callable($handler)) {
-            return $handler($request, $response, $route['args']);
+            return $handler($request, $response, $params);
         }
 
         throw new InvalidArgumentException('Invalid route handler.');
