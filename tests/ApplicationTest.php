@@ -74,12 +74,23 @@ class ApplicationTest extends TestCase
         $this->assertTrue(true); // No exception thrown
     }
 
+    public function testAddMiddlewareWithCallable(): void
+    {
+        $middleware = Mockery::mock(MiddlewareInterface::class);
+        $factory = function ($container) use ($middleware) {
+            return $middleware;
+        };
+
+        $this->application->addMiddleware($factory);
+        $this->assertTrue(true); // No exception thrown
+    }
+
     public function testAddMiddlewareWithInvalidObject(): void
     {
         $this->expectException(TypeError::class);
         $this->expectExceptionMessage(
             'Solo\Application\Application::addMiddleware(): Argument #1 ($middleware) ' .
-            'must be of type Psr\Http\Server\MiddlewareInterface|string, stdClass given'
+            'must be of type Psr\Http\Server\MiddlewareInterface|callable|string, stdClass given'
         );
 
         // @phpstan-ignore argument.type

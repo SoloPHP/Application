@@ -189,11 +189,20 @@ Add middleware using the `addMiddleware()` method:
 ```php
 $app->addMiddleware(CorsMiddleware::class);
 $app->addMiddleware(new AuthMiddleware($container));
+
+// Factory function (receives container, returns middleware instance)
+$app->addMiddleware(function ($container) {
+    return new RateLimitMiddleware(
+        $container->get(CacheInterface::class),
+        maxRequests: 100
+    );
+});
 ```
 
-Middleware can be added as either:
+Middleware can be added as:
 - Class name (will be resolved through container)
 - Object instance
+- Callable factory (receives container, must return middleware instance)
 
 Note: All middleware must be valid objects implementing middleware interface.
 

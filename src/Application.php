@@ -49,15 +49,17 @@ final class Application implements RequestHandlerInterface
     /**
      * Adds middleware to the application pipeline.
      *
-     * @param MiddlewareInterface|string $middleware Middleware class name or instance.
+     * @param MiddlewareInterface|string|callable $middleware Middleware class name, instance or factory.
      * @throws ContainerExceptionInterface If there was an error while retrieving the service.
      * @throws NotFoundExceptionInterface If no entry was found for the identifier.
      * @throws InvalidArgumentException If the middleware is not valid.
      */
-    public function addMiddleware(MiddlewareInterface|string $middleware): void
+    public function addMiddleware(MiddlewareInterface|string|callable $middleware): void
     {
         if (is_string($middleware)) {
             $middleware = $this->container->get($middleware);
+        } elseif (is_callable($middleware) && !$middleware instanceof MiddlewareInterface) {
+            $middleware = $middleware($this->container);
         }
 
         if (!$middleware instanceof MiddlewareInterface) {
