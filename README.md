@@ -3,319 +3,227 @@
 [![Latest Version on Packagist](https://img.shields.io/packagist/v/solophp/application.svg)](https://packagist.org/packages/solophp/application)
 [![License](https://img.shields.io/packagist/l/solophp/application.svg)](https://github.com/solophp/application/blob/main/LICENSE)
 [![PHP Version](https://img.shields.io/packagist/php-v/solophp/application.svg)](https://packagist.org/packages/solophp/application)
+[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](https://github.com/solophp/application)
 
+Application bootstrap with PSR-15 middleware pipeline.
 
-A PSR-compliant HTTP application class with middleware support, routing capabilities, and CORS handling.
+A lightweight, PSR-compliant application kernel that wires together your container, router, middleware, and HTTP layer with zero configuration overhead.
 
-## Requirements
+## Features
 
-- PHP 8.1 or higher
-- PSR-7 HTTP message interfaces implementation
-- PSR-11 container implementation
-- PSR-17 HTTP factory implementation
-- Router implementation that implements `Solo\Contracts\Router\RouterInterface`
+- PSR-15 middleware pipeline
+- PSR-11 container integration
+- Service providers for dependency registration
+- Flexible route handlers (controllers, invokables, callables)
+- Zero framework lock-in — uses only PSR interfaces
 
 ## Installation
-
-Install via Composer:
 
 ```bash
 composer require solophp/application
 ```
 
+## Requirements
+
+- PHP 8.2+
+- PSR-7 implementation (e.g., [nyholm/psr7](https://github.com/nyholm/psr7))
+- PSR-11 compatible container with `set()` method
+
 ## Dependencies
 
-- [psr/container](https://github.com/php-fig/container) ^2.0
-- [psr/http-message](https://github.com/php-fig/http-message) ^2.0
-- [psr/http-server-handler](https://github.com/php-fig/http-server-handler) ^1.0
-- [psr/http-server-middleware](https://github.com/php-fig/http-server-middleware) ^1.0
-- [psr/http-factory](https://github.com/php-fig/http-factory) ^1.0
-- [solophp/contracts](https://github.com/solophp/contracts) ^1.0
+The package depends only on **PSR interfaces** and **solophp/contracts**:
 
-### Suggested
+| Dependency | Purpose |
+|------------|---------|
+| psr/container | Container interface |
+| psr/http-message | HTTP messages |
+| psr/http-server-handler | Request handler |
+| psr/http-server-middleware | Middleware |
+| psr/http-factory | Response factory |
+| solophp/contracts | WritableContainerInterface, EmitterInterface, RouterInterface |
 
-- [solophp/router](https://github.com/solophp/router) ^2.0 - Default router implementation
-
-## Router
-
-The application requires a router implementation that implements `Solo\Contracts\Router\RouterInterface`. You can use the suggested [solophp/router](https://github.com/solophp/router) package or provide your own implementation:
-
-```bash
-# Install the default router implementation
-composer require solophp/router
-```
-
-## Basic Usage
+## Usage
 
 ```php
+// public/index.php
+<?php
+
+require __DIR__ . '/../vendor/autoload.php';
+
 use Solo\Application\Application;
-use Solo\Application\CorsHandlerInterface;
-use Solo\Router\RouteCollector;
-use Psr\Http\Message\ServerRequestInterface;
-use Psr\Http\Message\ResponseInterface;
+use Solo\Application\Config;
+use Solo\Dotenv\Dotenv;
 
-// Create router implementation
-$router = new RouteCollector();
+$basePath = dirname(__DIR__);
 
-// Create application with router
-$app = new Application($router, $container, $responseFactory);
+Dotenv::load($basePath, ['.env', '.env.local']);
 
-// Add routes directly to router
-$router->get('/hello/{name}', function (ServerRequestInterface $request, ResponseInterface $response, array $args) {
-    $response->getBody()->write("Hello, {$args['name']}!");
-    return $response;
-});
-
-// Add middleware
-$app->addMiddleware(SomeMiddleware::class);
-
-// Run application
-$response = $app->run($request);
-```
-
-## Constructor Options
-
-```php
-public function __construct(
-    RouterInterface $router,
-    ContainerInterface $container,
-    ResponseFactoryInterface $responseFactory,
-    ?CorsHandlerInterface $corsHandler = null
-)
-```
-
-- `$router` - Router implementation that implements `Solo\Contracts\Router\RouterInterface`
-- `$container` - PSR-11 container implementation
-- `$responseFactory` - PSR-17 response factory implementation
-- `$corsHandler` - Optional CORS handler for API requests
-
-## Router Interface
-
-The application works with any router implementation that implements `Solo\Contracts\Router\RouterInterface`:
-
-```php
-interface RouterInterface
-{
-    /**
-     * Adds a new route to the router.
-     *
-     * @param string $method HTTP method (GET, POST, etc.)
-     * @param string $path Route path, without group prefix
-     * @param callable|array|string $handler Route handler (callable or controller reference)
-     * @param array{group?:string,middlewares?:array<int,callable>,name?:string} $options
-     */
-    public function addRoute(
-        string $method,
-        string $path,
-        callable|array|string $handler,
-        array $options = []
-    ): void;
-
-    /**
-     * Matches the requested method and URL against registered routes.
-     *
-     * @param string $method HTTP method of the request
-     * @param string $uri Requested URI
-     * @return array{handler:callable|array|string,params:array<string,string>,middlewares:array<int,callable>}|false
-     */
-    public function match(string $method, string $uri): array|false;
-}
-```
-
-This allows you to use any router implementation or create your own.
-
-## CORS Support
-
-The application includes built-in CORS (Cross-Origin Resource Sharing) support through an optional CORS handler:
-
-### Using the Default CORS Handler
-
-The package provides a ready-to-use `CorsHandler` implementation:
-
-```php
-use Solo\Application\Application;
-use Solo\Application\CorsHandler;
-
-// Basic CORS with default settings (allows all origins)
-$corsHandler = new CorsHandler();
-$app = new Application($router, $container, $responseFactory, $corsHandler);
-
-// Custom CORS configuration
-$corsHandler = new CorsHandler(
-    allowedOrigins: ['http://localhost:3000', 'https://myapp.com'],
-    allowedMethods: ['GET', 'POST', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-    allowCredentials: true,
-    maxAge: 3600
+$config = new Config(
+    basePath: $basePath,
+    routesPath: $basePath . '/app/routes.php',
+    providers: require $basePath . '/app/providers.php',
+    middleware: require $basePath . '/app/middleware.php',
 );
-$app = new Application($router, $container, $responseFactory, $corsHandler);
+
+$app = new Application($config);
+$app->run();
 ```
 
-### Custom CORS Handler
+## Required Services
 
-You can also implement your own CORS handler:
+Your application must register these services via providers:
 
-```php
-use Solo\Application\CorsHandlerInterface;
+| Service | Interface |
+|---------|-----------|
+| Response Factory | `Psr\Http\Message\ResponseFactoryInterface` |
+| Server Request | `Psr\Http\Message\ServerRequestInterface` |
+| Router | `Solo\Contracts\Router\RouterInterface` |
+| Emitter | `Solo\Contracts\Http\EmitterInterface` |
 
-class MyCorsHandler implements CorsHandlerInterface
-{
-    public function shouldApplyCors(ServerRequestInterface $request): bool
-    {
-        // Your logic to determine if CORS should be applied
-        return true;
-    }
-
-    public function addCorsHeaders(ResponseInterface $response, ServerRequestInterface $request): ResponseInterface
-    {
-        // Add appropriate CORS headers
-        return $response
-            ->withHeader('Access-Control-Allow-Origin', '*')
-            ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-            ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    }
-}
-
-$corsHandler = new MyCorsHandler();
-$app = new Application($router, $container, $responseFactory, $corsHandler);
-```
-
-The application automatically handles OPTIONS requests when a CORS handler is provided, returning appropriate CORS headers without requiring explicit route definitions.
-
-## Middleware
-
-Add middleware using the `addMiddleware()` method:
+Example provider:
 
 ```php
-$app->addMiddleware(CorsMiddleware::class);
-$app->addMiddleware(new AuthMiddleware($container));
+<?php
 
-// Factory function (receives container, returns middleware instance)
-$app->addMiddleware(function ($container) {
-    return new RateLimitMiddleware(
-        $container->get(CacheInterface::class),
-        maxRequests: 100
-    );
-});
-```
+namespace App\Providers;
 
-Middleware can be added as:
-- Class name (will be resolved through container)
-- Object instance
-- Callable factory (receives container, must return middleware instance)
-
-Note: All middleware must be valid objects implementing middleware interface.
-
-## Routing
-
-The application provides convenient routing methods that delegate to the router implementation:
-
-```php
- // Route with controller
-$app->post('/api/users', [UserController::class, 'create']);
-
-// Route with callable controller
-$app->post('/api/users', UserController::class);
-
-// Route with callback
-$app->get('/api/users', function ($request, $response) {
-    // Handle request
-    return $response;
-});
-
-// Route with middleware
-$app->get('/admin/dashboard', [DashboardController::class, 'index'])
-    ->addMiddleware(AdminAuthMiddleware::class);
-
-// Route with page attribute
-$app->get('/blog/{slug}', [BlogController::class, 'show'], [], 'blog.show');
-```
-
-### Route Parameters
-
-Inside your handlers, you can access the matched route parameters through the request's attributes:
-
-```php
-public function handle(ServerRequestInterface $request): ResponseInterface
-{
-    $handler = $request->getAttribute('handler');
-    $params = $request->getAttribute('params', []);
-
-    // Access route parameters
-    $userId = $params['id'] ?? null;
-
-    // ...
-}
-```
-
-The request contains the following attributes after routing:
-- `handler` - The matched route handler (callable, array, or string)
-- `params` - Array of route parameters extracted from the URL
-
-## CORS Handler Interface
-
-If you need to implement custom CORS handling, implement the `CorsHandlerInterface`:
-
-```php
-use Solo\Application\CorsHandlerInterface;
-use Psr\Http\Message\ResponseInterface;
+use Nyholm\Psr7\Factory\Psr17Factory;
+use Nyholm\Psr7Server\ServerRequestCreator;
+use Psr\Container\ContainerInterface;
+use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use Solo\Container\Container;
+use Solo\Contracts\Http\EmitterInterface;
+use Solo\Contracts\Router\RouterInterface;
+use Solo\HttpEmitter\Emitter;
+use Solo\Router\RouteCollector;
 
-class CustomCorsHandler implements CorsHandlerInterface
+final class HttpServiceProvider
 {
-    public function shouldApplyCors(ServerRequestInterface $request): bool
+    public function register(Container $container): void
     {
-        // Implement your logic to determine when CORS should be applied
-        // For example, check if request has an Origin header
-        return $request->hasHeader('Origin');
-    }
+        $container->set(Psr17Factory::class, fn() => new Psr17Factory());
 
-    public function addCorsHeaders(ResponseInterface $response, ServerRequestInterface $request): ResponseInterface
-    {
-        $origin = $request->getHeaderLine('Origin');
-        
-        // Add CORS headers based on your requirements
-        return $response
-            ->withHeader('Access-Control-Allow-Origin', $origin)
-            ->withHeader('Access-Control-Allow-Credentials', 'true')
-            ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-            ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
-            ->withHeader('Access-Control-Max-Age', '86400');
+        $container->set(ResponseFactoryInterface::class,
+            fn(ContainerInterface $c) => $c->get(Psr17Factory::class)
+        );
+
+        $container->set(ServerRequestInterface::class, function (ContainerInterface $c) {
+            $factory = $c->get(Psr17Factory::class);
+            return (new ServerRequestCreator($factory, $factory, $factory, $factory))
+                ->fromGlobals();
+        });
+
+        $container->set(RouterInterface::class, fn() => new RouteCollector());
+        $container->set(EmitterInterface::class, fn() => new Emitter());
     }
 }
 ```
 
-## Development
+## Custom Container
 
-### Running Tests
+You can provide your own container:
 
-```bash
-# Run tests
-composer test
+```php
+$container = new MyContainer();
+// ... configure container ...
 
-# Run tests with coverage
-composer test-coverage
-
-# Run code style check
-composer cs
-
-# Fix code style issues
-composer cs-fix
-
-# Run static analysis
-composer stan
-
-# Run all checks
-composer check
+$app = new Application($config, $container);
 ```
 
-## Exception Handling
+The container must implement `Solo\Contracts\Container\WritableContainerInterface`.
 
-The following exceptions may be thrown:
+## Components
 
-- `ContainerExceptionInterface` - Error retrieving service from container
-- `NotFoundExceptionInterface` - Service not found in container
-- `InvalidArgumentException` - Invalid route handler or middleware
+| Class | Description |
+|-------|-------------|
+| `Application` | Bootstrap and run the application |
+| `Config` | Configuration DTO |
+| `MiddlewarePipeline` | PSR-15 middleware pipeline |
+| `RouteDispatcher` | Controller invocation |
+
+## Request Flow
+
+```
+HTTP Request
+      │
+      ▼
+Application.run()
+      │
+      ▼
+MiddlewarePipeline
+      │
+      ▼
+[Middleware 1] → [Middleware 2] → ... → [RoutingMiddleware]
+      │
+      ▼
+RouteDispatcher → Controller
+      │
+      ▼
+HTTP Response
+```
+
+## Configuration
+
+### providers.php
+
+```php
+<?php
+
+return [
+    HttpServiceProvider::class,
+    DatabaseServiceProvider::class,
+    LoggingServiceProvider::class,
+];
+```
+
+### middleware.php
+
+```php
+<?php
+
+return [
+    CorsMiddleware::class,
+    ErrorHandlerMiddleware::class,
+    JsonParserMiddleware::class,
+    RoutingMiddleware::class,
+];
+```
+
+### routes.php
+
+```php
+<?php
+
+use Solo\Contracts\Router\RouterInterface;
+
+return function (RouterInterface $r) {
+    $r->addRoute('GET', '/api/users', [UserController::class, 'index']);
+    $r->addRoute('POST', '/api/users', [UserController::class, 'store']);
+};
+```
+
+## Service Providers
+
+Service providers register dependencies in the container:
+
+```php
+<?php
+
+namespace App\Providers;
+
+use Solo\Container\Container;
+
+final class DatabaseServiceProvider
+{
+    public function register(Container $container): void
+    {
+        $container->set(Connection::class, function () {
+            return new Connection(/* ... */);
+        });
+    }
+}
+```
 
 ## License
 

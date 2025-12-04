@@ -4,318 +4,254 @@ declare(strict_types=1);
 
 namespace Solo\Application\Tests;
 
-use InvalidArgumentException;
-use Mockery;
 use PHPUnit\Framework\TestCase;
 use Psr\Container\ContainerInterface;
 use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
-use Psr\Http\Message\UriInterface;
 use Psr\Http\Server\MiddlewareInterface;
+use Psr\Http\Server\RequestHandlerInterface;
+use RuntimeException;
 use Solo\Application\Application;
-use Solo\Application\CorsHandlerInterface;
+use Solo\Application\Config;
+use Solo\Application\RouteDispatcher;
+use Solo\Contracts\Container\WritableContainerInterface;
+use Solo\Contracts\Http\EmitterInterface;
 use Solo\Contracts\Router\RouterInterface;
-use TypeError;
 
-class ApplicationTest extends TestCase
+final class ApplicationTest extends TestCase
 {
-    private ContainerInterface $container;
-    private ResponseFactoryInterface $responseFactory;
-    private Application $application;
-    private CorsHandlerInterface $corsHandler;
-    private RouterInterface $router;
+    private string $routesFile;
 
     protected function setUp(): void
     {
-        $this->container = Mockery::mock(ContainerInterface::class);
-        $this->responseFactory = Mockery::mock(ResponseFactoryInterface::class);
-        $this->corsHandler = Mockery::mock(CorsHandlerInterface::class);
-        $this->router = Mockery::mock(RouterInterface::class);
-        $this->application = new Application(
-            $this->router,
-            $this->container,
-            $this->responseFactory
-        );
+        $this->routesFile = sys_get_temp_dir() . '/test_routes_' . uniqid() . '.php';
+        file_put_contents($this->routesFile, '<?php return function($router) {};');
     }
 
     protected function tearDown(): void
     {
-        Mockery::close();
+        if (file_exists($this->routesFile)) {
+            unlink($this->routesFile);
+        }
     }
 
-    public function testConstructorWithCorsHandler(): void
+    public function testConstructorSetsConfigInContainer(): void
     {
-        $app = new Application(
-            $this->router,
-            $this->container,
-            $this->responseFactory,
-            $this->corsHandler
-        );
-        $this->assertInstanceOf(Application::class, $app);
+        $container = $this->createWritableContainer();
+        $config = $this->createConfig();
+
+        $app = new Application($config, $container);
+
+        $this->assertSame($config, $app->config);
+        $this->assertSame($container, $app->container);
     }
 
-    public function testAddMiddlewareWithString(): void
+    public function testConstructorUsesDefaultContainer(): void
     {
-        $middleware = Mockery::mock(MiddlewareInterface::class);
-        $this->container->shouldReceive('get')
-            ->with('TestMiddleware')
-            ->once()
-            ->andReturn($middleware);
-
-        $this->application->addMiddleware('TestMiddleware');
-        $this->assertTrue(true); // No exception thrown
-    }
-
-    public function testAddMiddlewareWithObject(): void
-    {
-        $middleware = Mockery::mock(MiddlewareInterface::class);
-        $this->application->addMiddleware($middleware);
-        $this->assertTrue(true); // No exception thrown
-    }
-
-    public function testAddMiddlewareWithCallable(): void
-    {
-        $middleware = Mockery::mock(MiddlewareInterface::class);
-        $factory = function ($container) use ($middleware) {
-            return $middleware;
-        };
-
-        $this->application->addMiddleware($factory);
-        $this->assertTrue(true); // No exception thrown
-    }
-
-    public function testAddMiddlewareWithInvalidObject(): void
-    {
-        $this->expectException(TypeError::class);
-        $this->expectExceptionMessage(
-            'Solo\Application\Application::addMiddleware(): Argument #1 ($middleware) ' .
-            'must be of type Psr\Http\Server\MiddlewareInterface|callable|string, stdClass given'
+        $config = new Config(
+            basePath: '/app',
+            routesPath: $this->routesFile,
+            providers: [TestServiceProvider::class],
+            middleware: [],
         );
 
-        // @phpstan-ignore argument.type
-        $this->application->addMiddleware(new \stdClass());
+        $app = new Application($config);
+
+        $this->assertInstanceOf(\Solo\Container\Container::class, $app->container);
     }
 
-    public function testRunWithCorsOptionsRequest(): void
+    public function testConstructorRegistersProviders(): void
     {
-        $app = new Application(
-            $this->router,
-            $this->container,
-            $this->responseFactory,
-            $this->corsHandler
+        $container = $this->createWritableContainer();
+
+        $providerFile = sys_get_temp_dir() . '/test_provider_' . uniqid() . '.php';
+        $markerFile = sys_get_temp_dir() . '/provider_called_' . uniqid();
+
+        file_put_contents($providerFile, '<?php
+            return new class {
+                public function register($container): void {
+                    file_put_contents("' . $markerFile . '", "1");
+                }
+            };
+        ');
+
+        $provider = require $providerFile;
+        $providerClass = get_class($provider);
+
+        $config = new Config(
+            basePath: '/app',
+            routesPath: $this->routesFile,
+            providers: [$providerClass],
+            middleware: [],
         );
 
-        $request = Mockery::mock(ServerRequestInterface::class);
-        $request->shouldReceive('getMethod')->andReturn('OPTIONS');
+        new Application($config, $container);
 
-        $uri = Mockery::mock(UriInterface::class);
-        $request->shouldReceive('getUri')->andReturn($uri);
+        $this->assertFileExists($markerFile);
 
-        $this->corsHandler->shouldReceive('shouldApplyCors')
-            ->with($request)
-            ->andReturn(true);
-
-        $response = Mockery::mock(ResponseInterface::class);
-        $this->responseFactory->shouldReceive('createResponse')
-            ->with(200)
-            ->andReturn($response);
-
-        $this->corsHandler->shouldReceive('addCorsHeaders')
-            ->with($response, $request)
-            ->andReturn($response);
-
-        $result = $app->run($request);
-        $this->assertSame($response, $result);
+        unlink($providerFile);
+        unlink($markerFile);
     }
 
-    public function testRunWithNotFoundRoute(): void
+    public function testRunExecutesMiddlewarePipelineAndEmitsResponse(): void
     {
-        $request = Mockery::mock(ServerRequestInterface::class);
-        $request->shouldReceive('getMethod')->andReturn('GET');
+        $response = $this->createMock(ResponseInterface::class);
+        $request = $this->createMock(ServerRequestInterface::class);
+        $request->method('getAttribute')->willReturnMap([
+            ['handler', null, fn($req, $res, $params) => $res],
+            ['params', [], []],
+        ]);
 
-        $uri = Mockery::mock(UriInterface::class);
-        $uri->shouldReceive('getPath')->andReturn('/not-found');
-        $request->shouldReceive('getUri')->andReturn($uri);
+        $emitter = $this->createMock(EmitterInterface::class);
+        $emitter->expects($this->once())->method('emit')->with($this->isInstanceOf(ResponseInterface::class));
 
-        $this->router->shouldReceive('match')
-            ->with('GET', '/not-found')
-            ->andReturn(false);
+        $responseFactory = $this->createMock(ResponseFactoryInterface::class);
+        $responseFactory->method('createResponse')->willReturn($response);
 
-        $response = Mockery::mock(ResponseInterface::class);
-        $this->responseFactory->shouldReceive('createResponse')
-            ->with(404)
-            ->andReturn($response);
+        $router = $this->createMock(RouterInterface::class);
 
-        $result = $this->application->run($request);
-        $this->assertSame($response, $result);
-    }
-
-    public function testRunWithFoundRoute(): void
-    {
-        $request = Mockery::mock(ServerRequestInterface::class);
-        $request->shouldReceive('getMethod')->andReturn('GET');
-
-        $uri = Mockery::mock(UriInterface::class);
-        $uri->shouldReceive('getPath')->andReturn('/test');
-        $request->shouldReceive('getUri')->andReturn($uri);
-
-        $handler = function ($req, $resp, $params) {
-            return $resp;
-        };
-
-        $match = [
-            'handler' => $handler,
-            'params' => [],
-            'middlewares' => []
+        $services = [
+            RouterInterface::class => $router,
+            ResponseFactoryInterface::class => $responseFactory,
+            ServerRequestInterface::class => $request,
+            EmitterInterface::class => $emitter,
         ];
 
-        $this->router->shouldReceive('match')
-            ->with('GET', '/test')
-            ->andReturn($match);
+        $container = $this->createMock(WritableContainerInterface::class);
+        $container->method('get')->willReturnCallback(function ($id) use ($services, $container, $responseFactory) {
+            if ($id === ContainerInterface::class || $id === WritableContainerInterface::class) {
+                return $container;
+            }
+            if ($id === RouteDispatcher::class) {
+                return new RouteDispatcher($container, $responseFactory);
+            }
+            return $services[$id] ?? null;
+        });
 
-        $modifiedRequest = Mockery::mock(ServerRequestInterface::class);
-        $request->shouldReceive('withAttribute')
-            ->with('handler', $handler)
-            ->andReturnSelf();
-        $request->shouldReceive('withAttribute')
-            ->with('params', [])
-            ->andReturn($modifiedRequest);
-
-        $modifiedRequest->shouldReceive('getAttribute')
-            ->with('handler')
-            ->andReturn($handler);
-        $modifiedRequest->shouldReceive('getAttribute')
-            ->with('params', [])
-            ->andReturn([]);
-
-        $response = Mockery::mock(ResponseInterface::class);
-        $this->responseFactory->shouldReceive('createResponse')
-            ->andReturn($response);
-
-        $result = $this->application->run($request);
-        $this->assertSame($response, $result);
+        $config = $this->createConfig();
+        $app = new Application($config, $container);
+        $app->run($request);
     }
 
-    public function testHandleWithNoMiddleware(): void
+    public function testRunUsesRequestFromContainerWhenNotProvided(): void
     {
-        $request = Mockery::mock(ServerRequestInterface::class);
-        $handler = function ($req, $resp, $params) {
-            return $resp;
-        };
-        $request->shouldReceive('getAttribute')
-            ->with('handler')
-            ->andReturn($handler);
-        $request->shouldReceive('getAttribute')
-            ->with('params', [])
-            ->andReturn([]);
+        $response = $this->createMock(ResponseInterface::class);
+        $request = $this->createMock(ServerRequestInterface::class);
+        $request->method('getAttribute')->willReturnMap([
+            ['handler', null, fn($req, $res, $params) => $res],
+            ['params', [], []],
+        ]);
 
-        $response = Mockery::mock(ResponseInterface::class);
-        $this->responseFactory->shouldReceive('createResponse')
-            ->andReturn($response);
+        $emitter = $this->createMock(EmitterInterface::class);
+        $emitter->expects($this->once())->method('emit');
 
-        $result = $this->application->handle($request);
-        $this->assertSame($response, $result);
+        $responseFactory = $this->createMock(ResponseFactoryInterface::class);
+        $responseFactory->method('createResponse')->willReturn($response);
+
+        $router = $this->createMock(RouterInterface::class);
+
+        $services = [
+            RouterInterface::class => $router,
+            ResponseFactoryInterface::class => $responseFactory,
+            ServerRequestInterface::class => $request,
+            EmitterInterface::class => $emitter,
+        ];
+
+        $container = $this->createMock(WritableContainerInterface::class);
+        $container->method('get')->willReturnCallback(function ($id) use ($services, $container, $responseFactory) {
+            if ($id === ContainerInterface::class || $id === WritableContainerInterface::class) {
+                return $container;
+            }
+            if ($id === RouteDispatcher::class) {
+                return new RouteDispatcher($container, $responseFactory);
+            }
+            return $services[$id] ?? null;
+        });
+
+        $config = $this->createConfig();
+        $app = new Application($config, $container);
+        $app->run();
     }
 
-    public function testHandleWithMiddleware(): void
+    public function testRunWithMiddleware(): void
     {
-        $middleware = Mockery::mock(MiddlewareInterface::class);
-        $this->application->addMiddleware($middleware);
+        $response = $this->createMock(ResponseInterface::class);
+        $modifiedResponse = $this->createMock(ResponseInterface::class);
 
-        $request = Mockery::mock(ServerRequestInterface::class);
-        $handler = function ($req, $resp, $params) {
-            return $resp;
-        };
-        $request->shouldReceive('getAttribute')
-            ->with('handler')
-            ->andReturn($handler);
-        $request->shouldReceive('getAttribute')
-            ->with('params', [])
-            ->andReturn([]);
+        $request = $this->createMock(ServerRequestInterface::class);
+        $request->method('getAttribute')->willReturnMap([
+            ['handler', null, fn($req, $res, $params) => $res],
+            ['params', [], []],
+        ]);
 
-        $response = Mockery::mock(ResponseInterface::class);
-        $this->responseFactory->shouldReceive('createResponse')
-            ->andReturn($response);
+        $middleware = $this->createMock(MiddlewareInterface::class);
+        $middleware->method('process')->willReturnCallback(function ($request, $handler) use ($modifiedResponse) {
+            return $modifiedResponse;
+        });
 
-        $middleware->shouldReceive('process')
-            ->with($request, $this->application)
-            ->andReturn($response);
+        $emitter = $this->createMock(EmitterInterface::class);
+        $emitter->expects($this->once())->method('emit')->with($modifiedResponse);
 
-        $result = $this->application->handle($request);
-        $this->assertSame($response, $result);
+        $responseFactory = $this->createMock(ResponseFactoryInterface::class);
+        $responseFactory->method('createResponse')->willReturn($response);
+
+        $router = $this->createMock(RouterInterface::class);
+
+        $services = [
+            RouterInterface::class => $router,
+            ResponseFactoryInterface::class => $responseFactory,
+            ServerRequestInterface::class => $request,
+            EmitterInterface::class => $emitter,
+            'TestMiddleware' => $middleware,
+        ];
+
+        $container = $this->createMock(WritableContainerInterface::class);
+        $container->method('get')->willReturnCallback(function ($id) use ($services, $container, $responseFactory) {
+            if ($id === ContainerInterface::class || $id === WritableContainerInterface::class) {
+                return $container;
+            }
+            if ($id === RouteDispatcher::class) {
+                return new RouteDispatcher($container, $responseFactory);
+            }
+            return $services[$id] ?? null;
+        });
+
+        $config = new Config(
+            basePath: '/app',
+            routesPath: $this->routesFile,
+            providers: [],
+            middleware: ['TestMiddleware'],
+        );
+
+        $app = new Application($config, $container);
+        $app->run($request);
     }
 
-    public function testRouteDispatcherWithStringHandler(): void
+    private function createConfig(): Config
     {
-        $request = Mockery::mock(ServerRequestInterface::class);
-        $request->shouldReceive('getAttribute')
-            ->with('handler')
-            ->andReturn('TestController');
-        $request->shouldReceive('getAttribute')
-            ->with('params', [])
-            ->andReturn([]);
-
-        $response = Mockery::mock(ResponseInterface::class);
-        $this->responseFactory->shouldReceive('createResponse')
-            ->andReturn($response);
-
-        $controller = function ($req, $resp, $params) {
-            return $resp;
-        };
-
-        $this->container->shouldReceive('get')
-            ->with('TestController')
-            ->andReturn($controller);
-
-        $result = $this->application->handle($request);
-        $this->assertSame($response, $result);
+        return new Config(
+            basePath: '/app',
+            routesPath: $this->routesFile,
+            providers: [],
+            middleware: [],
+        );
     }
 
-    public function testRouteDispatcherWithArrayHandler(): void
+    private function createWritableContainer(): WritableContainerInterface
     {
-        $request = Mockery::mock(ServerRequestInterface::class);
-        $request->shouldReceive('getAttribute')
-            ->with('handler')
-            ->andReturn(['TestController', 'index']);
-        $request->shouldReceive('getAttribute')
-            ->with('params', [])
-            ->andReturn([]);
+        $router = $this->createMock(RouterInterface::class);
+        $responseFactory = $this->createMock(ResponseFactoryInterface::class);
 
-        $response = Mockery::mock(ResponseInterface::class);
-        $this->responseFactory->shouldReceive('createResponse')
-            ->andReturn($response);
+        $container = $this->createMock(WritableContainerInterface::class);
+        $container->method('get')->willReturnCallback(function ($id) use ($router, $responseFactory) {
+            return match ($id) {
+                RouterInterface::class => $router,
+                ResponseFactoryInterface::class => $responseFactory,
+                default => null,
+            };
+        });
 
-        $controller = Mockery::mock();
-        $controller->shouldReceive('index')
-            ->with($request, $response, [])
-            ->andReturn($response);
-
-        $this->container->shouldReceive('get')
-            ->with('TestController')
-            ->andReturn($controller);
-
-        $result = $this->application->handle($request);
-        $this->assertSame($response, $result);
-    }
-
-    public function testRouteDispatcherWithInvalidHandler(): void
-    {
-        $request = Mockery::mock(ServerRequestInterface::class);
-        $request->shouldReceive('getAttribute')
-            ->with('handler')
-            ->andReturn(null);
-        $request->shouldReceive('getAttribute')
-            ->with('params', [])
-            ->andReturn([]);
-
-        $response = Mockery::mock(ResponseInterface::class);
-        $this->responseFactory->shouldReceive('createResponse')
-            ->andReturn($response);
-
-        $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('Invalid route handler.');
-
-        $this->application->handle($request);
+        return $container;
     }
 }
