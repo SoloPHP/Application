@@ -117,7 +117,7 @@ final class MiddlewarePipelineTest extends TestCase
         $this->assertSame([1, 2], $callOrder);
     }
 
-    public function testAddResolvesMiddlewareFromContainer(): void
+    public function testHandleResolvesMiddlewareFromContainer(): void
     {
         $middleware = $this->createMock(MiddlewareInterface::class);
         $middleware
@@ -139,17 +139,18 @@ final class MiddlewarePipelineTest extends TestCase
         $this->assertSame($this->response, $result);
     }
 
-    public function testAddThrowsExceptionForInvalidMiddleware(): void
+    public function testHandleThrowsExceptionForInvalidMiddleware(): void
     {
         $this->container
             ->method('get')
             ->willReturn(new \stdClass());
 
         $pipeline = new MiddlewarePipeline($this->container, $this->finalHandler);
+        $pipeline->add('InvalidMiddleware');
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('Middleware must implement MiddlewareInterface');
 
-        $pipeline->add('InvalidMiddleware');
+        $pipeline->handle($this->request);
     }
 }

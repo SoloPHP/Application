@@ -13,7 +13,7 @@ use Psr\Http\Server\RequestHandlerInterface;
 
 final class MiddlewarePipeline implements RequestHandlerInterface
 {
-    /** @var MiddlewareInterface[] */
+    /** @var array<string|MiddlewareInterface> */
     private array $middlewares = [];
     private int $index = 0;
 
@@ -25,7 +25,7 @@ final class MiddlewarePipeline implements RequestHandlerInterface
 
     public function add(string|MiddlewareInterface $middleware): void
     {
-        $this->middlewares[] = $this->resolve($middleware);
+        $this->middlewares[] = $middleware;
     }
 
     public function addFromArray(array $middlewares): void
@@ -41,7 +41,7 @@ final class MiddlewarePipeline implements RequestHandlerInterface
             return $this->finalHandler->handle($request);
         }
 
-        $middleware = $this->middlewares[$this->index];
+        $middleware = $this->resolve($this->middlewares[$this->index]);
         $this->index++;
 
         return $middleware->process($request, $this);

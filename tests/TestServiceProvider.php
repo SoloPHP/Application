@@ -20,7 +20,8 @@ final class TestServiceProvider
                 string $path,
                 callable|array|string $handler,
                 array $options = []
-            ): void {
+            ): object {
+                return $this;
             }
             public function match(string $method, string $uri): array|false
             {
