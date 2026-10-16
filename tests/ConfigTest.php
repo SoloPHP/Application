@@ -6,6 +6,7 @@ namespace Solo\Application\Tests;
 
 use PHPUnit\Framework\TestCase;
 use Solo\Application\Config;
+use Solo\Application\Tests\Fixtures\HttpServiceProvider;
 
 final class ConfigTest extends TestCase
 {
@@ -14,13 +15,13 @@ final class ConfigTest extends TestCase
         $config = new Config(
             basePath: '/app',
             routesPath: '/app/routes.php',
-            providers: ['Provider1', 'Provider2'],
+            providers: [HttpServiceProvider::class],
             middleware: ['Middleware1', 'Middleware2'],
         );
 
         $this->assertSame('/app', $config->basePath);
         $this->assertSame('/app/routes.php', $config->routesPath);
-        $this->assertSame(['Provider1', 'Provider2'], $config->providers);
+        $this->assertSame([HttpServiceProvider::class], $config->providers);
         $this->assertSame(['Middleware1', 'Middleware2'], $config->middleware);
     }
 
