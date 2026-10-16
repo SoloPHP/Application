@@ -5,190 +5,195 @@ declare(strict_types=1);
 namespace Solo\Application\Tests;
 
 use InvalidArgumentException;
+use Nyholm\Psr7\Factory\Psr17Factory;
+use PHPUnit\Framework\MockObject\Stub;
 use PHPUnit\Framework\TestCase;
 use Psr\Container\ContainerInterface;
-use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use Solo\Application\RequestAttribute;
 use Solo\Application\RouteDispatcher;
+use Solo\Application\Tests\Fixtures\TestController;
+use UnexpectedValueException;
 
 final class RouteDispatcherTest extends TestCase
 {
-    private ContainerInterface $container;
-    private ResponseFactoryInterface $responseFactory;
-    private ServerRequestInterface $request;
-    private ResponseInterface $response;
+    private ContainerInterface&Stub $container;
 
     protected function setUp(): void
     {
-        $this->container = $this->createMock(ContainerInterface::class);
-        $this->responseFactory = $this->createMock(ResponseFactoryInterface::class);
-        $this->request = $this->createMock(ServerRequestInterface::class);
-        $this->response = $this->createMock(ResponseInterface::class);
+        $this->container = $this->createStub(ContainerInterface::class);
     }
 
     public function testHandleReturns404WhenNoHandler(): void
     {
-        $notFoundResponse = $this->createMock(ResponseInterface::class);
-
-        $this->request
-            ->method('getAttribute')
-            ->willReturnMap([
-                ['handler', null, null],
-                ['params', [], []],
-            ]);
-
-        $this->responseFactory
-            ->expects($this->once())
-            ->method('createResponse')
-            ->with(404)
-            ->willReturn($notFoundResponse);
-
-        $dispatcher = new RouteDispatcher($this->container, $this->responseFactory);
-        $result = $dispatcher->handle($this->request);
-
-        $this->assertSame($notFoundResponse, $result);
+        $this->assertSame(404, $this->dispatch(null)->getStatusCode());
     }
 
-    public function testHandleWithArrayHandler(): void
+    public function testHandleWithArrayHandlerResolvesControllerFromContainer(): void
     {
-        $controller = new class {
-            public function action(
-                ServerRequestInterface $request,
-                ResponseInterface $response,
-                array $params
-            ): ResponseInterface {
-                return $response;
-            }
-        };
-
-        $this->request
-            ->method('getAttribute')
-            ->willReturnMap([
-                ['handler', null, [$controller::class, 'action']],
-                ['params', [], ['id' => '123']],
-            ]);
-
-        $this->responseFactory
-            ->method('createResponse')
-            ->willReturn($this->response);
-
-        $this->container
+        $container = $this->createMock(ContainerInterface::class);
+        $container
+            ->expects($this->once())
             ->method('get')
-            ->with($controller::class)
-            ->willReturn($controller);
+            ->with(TestController::class)
+            ->willReturn(new TestController());
 
-        $dispatcher = new RouteDispatcher($this->container, $this->responseFactory);
-        $result = $dispatcher->handle($this->request);
+        $response = $this->dispatch([TestController::class, 'show'], ['id' => '123'], $container);
 
-        $this->assertSame($this->response, $result);
+        $this->assertSame('user 123', (string) $response->getBody());
     }
 
     public function testHandleWithInvokableHandler(): void
     {
-        $controller = new class {
+        $container = $this->createMock(ContainerInterface::class);
+        $container->expects($this->once())->method('get')->with('App\\Action')->willReturn($this->action('invoked'));
+
+        $this->assertSame('invoked', (string) $this->dispatch('App\\Action', [], $container)->getBody());
+    }
+
+    public function testContainerIdTakesPrecedenceOverFunctionName(): void
+    {
+        // reset() is a PHP function, but a service registered as "reset" must win
+        $container = $this->createMock(ContainerInterface::class);
+        $container->method('has')->with('reset')->willReturn(true);
+        $container->expects($this->once())->method('get')->with('reset')->willReturn($this->action('reset action'));
+
+        $this->assertSame('reset action', (string) $this->dispatch('reset', [], $container)->getBody());
+    }
+
+    public function testHandleWithObjectMethodDoesNotUseContainer(): void
+    {
+        $container = $this->createMock(ContainerInterface::class);
+        $container->expects($this->never())->method('get');
+
+        $response = $this->dispatch([new TestController(), 'show'], ['id' => '7'], $container);
+
+        $this->assertSame('user 7', (string) $response->getBody());
+    }
+
+    public function testHandleWithCallableStringDoesNotUseContainer(): void
+    {
+        $container = $this->createMock(ContainerInterface::class);
+        $container->expects($this->never())->method('get');
+
+        $response = $this->dispatch(TestController::class . '::ping', [], $container);
+
+        $this->assertSame('pong', (string) $response->getBody());
+    }
+
+    public function testHandleWithStaticMethodArrayDoesNotUseContainer(): void
+    {
+        $container = $this->createMock(ContainerInterface::class);
+        $container->expects($this->never())->method('get');
+
+        $response = $this->dispatch([TestController::class, 'ping'], [], $container);
+
+        $this->assertSame('pong', (string) $response->getBody());
+    }
+
+    public function testHandleWithCallableHandler(): void
+    {
+        $received = null;
+        $handler = function ($request, $response, $params) use (&$received) {
+            $received = [$request, $params];
+            return $response->withStatus(201);
+        };
+
+        $request = $this->request($handler, ['id' => '42', 'slug' => 'test']);
+        $response = (new RouteDispatcher($this->container, new Psr17Factory()))->handle($request);
+
+        $this->assertSame(201, $response->getStatusCode());
+        $this->assertSame([$request, ['id' => '42', 'slug' => 'test']], $received);
+    }
+
+    public function testHandleThrowsExceptionForInvalidHandler(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Route handler int is not callable');
+
+        $this->dispatch(12345);
+    }
+
+    public function testHandleThrowsExceptionForMissingControllerMethod(): void
+    {
+        $this->container->method('get')->willReturn(new TestController());
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Route handler ' . TestController::class . '::missing is not callable');
+
+        $this->dispatch([TestController::class, 'missing']);
+    }
+
+    public function testHandleThrowsExceptionWhenHandlerDoesNotReturnResponse(): void
+    {
+        $this->expectException(UnexpectedValueException::class);
+        $this->expectExceptionMessage(
+            'Route handler Closure must return Psr\Http\Message\ResponseInterface, string returned'
+        );
+
+        $this->dispatch(fn() => 'oops');
+    }
+
+    public function testExceptionNamesAnonymousClassWithoutItsInternalName(): void
+    {
+        $handler = [new class {
+            public function show(): string
+            {
+                return 'oops';
+            }
+        }, 'show'];
+
+        $this->expectException(UnexpectedValueException::class);
+        $this->expectExceptionMessage('Route handler class@anonymous::show must return');
+
+        $this->dispatch($handler);
+    }
+
+    /**
+     * An invokable handler that writes $body.
+     */
+    private function action(string $body): object
+    {
+        return new class ($body) {
+            public function __construct(private readonly string $body)
+            {
+            }
+
+            /**
+             * @param array<string, string> $params
+             */
             public function __invoke(
                 ServerRequestInterface $request,
                 ResponseInterface $response,
                 array $params
             ): ResponseInterface {
+                $response->getBody()->write($this->body);
                 return $response;
             }
         };
-
-        $this->request
-            ->method('getAttribute')
-            ->willReturnMap([
-                ['handler', null, $controller::class],
-                ['params', [], []],
-            ]);
-
-        $this->responseFactory
-            ->method('createResponse')
-            ->willReturn($this->response);
-
-        $this->container
-            ->method('get')
-            ->with($controller::class)
-            ->willReturn($controller);
-
-        $dispatcher = new RouteDispatcher($this->container, $this->responseFactory);
-        $result = $dispatcher->handle($this->request);
-
-        $this->assertSame($this->response, $result);
     }
 
-    public function testHandleWithCallableHandler(): void
-    {
-        $called = false;
-        $handler = function ($request, $response, $params) use (&$called) {
-            $called = true;
-            return $response;
-        };
+    /**
+     * @param array<string, string> $params
+     */
+    private function dispatch(
+        mixed $handler,
+        array $params = [],
+        ?ContainerInterface $container = null,
+    ): ResponseInterface {
+        $dispatcher = new RouteDispatcher($container ?? $this->container, new Psr17Factory());
 
-        $this->request
-            ->method('getAttribute')
-            ->willReturnMap([
-                ['handler', null, $handler],
-                ['params', [], []],
-            ]);
-
-        $this->responseFactory
-            ->method('createResponse')
-            ->willReturn($this->response);
-
-        $dispatcher = new RouteDispatcher($this->container, $this->responseFactory);
-        $result = $dispatcher->handle($this->request);
-
-        $this->assertTrue($called);
-        $this->assertSame($this->response, $result);
+        return $dispatcher->handle($this->request($handler, $params));
     }
 
-    public function testHandleThrowsExceptionForInvalidHandler(): void
+    /**
+     * @param array<string, string> $params
+     */
+    private function request(mixed $handler, array $params): ServerRequestInterface
     {
-        $this->request
-            ->method('getAttribute')
-            ->willReturnMap([
-                ['handler', null, 12345],
-                ['params', [], []],
-            ]);
-
-        $this->responseFactory
-            ->method('createResponse')
-            ->willReturn($this->response);
-
-        $dispatcher = new RouteDispatcher($this->container, $this->responseFactory);
-
-        $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('Invalid route handler');
-
-        $dispatcher->handle($this->request);
-    }
-
-    public function testHandlePassesParamsToHandler(): void
-    {
-        $receivedParams = null;
-        $handler = function ($request, $response, $params) use (&$receivedParams) {
-            $receivedParams = $params;
-            return $response;
-        };
-
-        $expectedParams = ['id' => '42', 'slug' => 'test'];
-
-        $this->request
-            ->method('getAttribute')
-            ->willReturnMap([
-                ['handler', null, $handler],
-                ['params', [], $expectedParams],
-            ]);
-
-        $this->responseFactory
-            ->method('createResponse')
-            ->willReturn($this->response);
-
-        $dispatcher = new RouteDispatcher($this->container, $this->responseFactory);
-        $dispatcher->handle($this->request);
-
-        $this->assertSame($expectedParams, $receivedParams);
+        return (new Psr17Factory())->createServerRequest('GET', '/')
+            ->withAttribute(RequestAttribute::HANDLER, $handler)
+            ->withAttribute(RequestAttribute::PARAMS, $params);
     }
 }

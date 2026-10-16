@@ -26,27 +26,29 @@
     "psr/http-message": "^2.0",
     "psr/http-server-handler": "^1.0",
     "psr/http-server-middleware": "^1.0",
-    "psr/http-factory": "^1.0",
-    "solophp/contracts": "^1.0"
+    "psr/http-factory": "^1.1",
+    "solophp/contracts": "^1.5"
   },
   "suggest": {
     "solophp/container": "Default container implementation",
-    "solophp/router": "Default router implementation",
+    "solophp/router": "Default router implementation (3.3+ for 405 Method Not Allowed, 3.4+ for route attributes)",
     "solophp/http-emitter": "Default HTTP emitter implementation",
     "nyholm/psr7": "PSR-7/PSR-17 implementation",
     "nyholm/psr7-server": "ServerRequest creator from globals"
   },
   "require-dev": {
-    "phpunit/phpunit": "^12.0",
+    "phpunit/phpunit": "^11.5 || ^12.0",
     "squizlabs/php_codesniffer": "^4.0",
     "phpstan/phpstan": "^2.0",
-    "solophp/container": "^2.1"
+    "solophp/container": "^2.1 || ^3.0",
+    "solophp/router": "^3.4",
+    "nyholm/psr7": "^1.8.2"
   },
   "scripts": {
     "test": "phpunit",
-    "cs": "phpcs --standard=PSR12 src/ tests/",
-    "cs-fix": "phpcbf --standard=PSR12 src/ tests/",
-    "stan": "phpstan analyse src/ tests/",
+    "cs": "phpcs",
+    "cs-fix": "phpcbf",
+    "stan": "phpstan analyse",
     "check": [
       "@cs",
       "@stan",

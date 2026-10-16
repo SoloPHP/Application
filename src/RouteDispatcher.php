@@ -10,6 +10,7 @@ use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use UnexpectedValueException;
 
 final readonly class RouteDispatcher implements RequestHandlerInterface
 {
@@ -21,27 +22,36 @@ final readonly class RouteDispatcher implements RequestHandlerInterface
 
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
-        $handler = $request->getAttribute('handler');
+        $handler = $request->getAttribute(RequestAttribute::HANDLER);
 
         if ($handler === null) {
             return $this->responseFactory->createResponse(404);
         }
 
-        $callable = match (true) {
-            is_array($handler) && count($handler) === 2
-                => [$this->container->get($handler[0]), $handler[1]],
-            is_string($handler)
-                => $this->container->get($handler),
-            is_callable($handler)
-                => $handler,
-            default
-                => throw new InvalidArgumentException('Invalid route handler'),
-        };
+        $callable = CallableResolver::resolve($this->container, $handler);
 
-        return $callable(
+        if (!is_callable($callable)) {
+            throw new InvalidArgumentException(sprintf(
+                'Route handler %s is not callable',
+                CallableResolver::describe($handler)
+            ));
+        }
+
+        $response = $callable(
             $request,
             $this->responseFactory->createResponse(),
-            $request->getAttribute('params', []),
+            $request->getAttribute(RequestAttribute::PARAMS, []),
         );
+
+        if (!$response instanceof ResponseInterface) {
+            throw new UnexpectedValueException(sprintf(
+                'Route handler %s must return %s, %s returned',
+                CallableResolver::describe($handler),
+                ResponseInterface::class,
+                get_debug_type($response)
+            ));
+        }
+
+        return $response;
     }
 }
