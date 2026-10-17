@@ -52,6 +52,7 @@ final readonly class Application implements RequestHandlerInterface
 
         $this->container->set(RouteDispatcher::class, $this->createRouteDispatcher(...));
         $this->container->set(RoutingMiddleware::class, $this->createRoutingMiddleware(...));
+        $this->container->set(RoutingErrorMiddleware::class, $this->createRoutingErrorMiddleware(...));
     }
 
     // The factories use $this->container rather than their argument: a container that delegates may
@@ -64,11 +65,12 @@ final readonly class Application implements RequestHandlerInterface
 
     private function createRoutingMiddleware(): RoutingMiddleware
     {
-        return new RoutingMiddleware(
-            $this->router,
-            $this->container,
-            $this->container->get(ResponseFactoryInterface::class)
-        );
+        return new RoutingMiddleware($this->router, $this->container);
+    }
+
+    private function createRoutingErrorMiddleware(): RoutingErrorMiddleware
+    {
+        return new RoutingErrorMiddleware($this->container->get(ResponseFactoryInterface::class));
     }
 
     private function registerProviders(): void
@@ -116,9 +118,11 @@ final readonly class Application implements RequestHandlerInterface
 
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
-        return (new MiddlewarePipeline($this->container, $this->container->get(RouteDispatcher::class)))
-            ->addFromArray($this->config->middleware)
-            ->handle($request);
+        $pipeline = (new MiddlewarePipeline($this->container, $this->container->get(RouteDispatcher::class)))
+            ->addFromArray($this->config->middleware);
+
+        // Answers a routing error that no middleware caught, outside every middleware
+        return $this->container->get(RoutingErrorMiddleware::class)->process($request, $pipeline);
     }
 
     public function run(?ServerRequestInterface $request = null): void

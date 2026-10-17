@@ -8,9 +8,12 @@ use Nyholm\Psr7\Factory\Psr17Factory;
 use PHPUnit\Framework\MockObject\Stub;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
+use Solo\Application\Exception\InvalidRouteParameterException;
+use Solo\Application\Exception\MethodNotAllowedException;
+use Solo\Application\Exception\RouteNotFoundException;
+use Solo\Application\Exception\RoutingException;
 use Solo\Application\RequestAttribute;
 use Solo\Application\RoutingMiddleware;
-use Solo\Application\Tests\Fixtures\ForwardingRouter;
 use Solo\Application\Tests\Fixtures\RecordingHandler;
 use Solo\Application\Tests\Fixtures\TestController;
 use Solo\Application\Tests\Fixtures\TraceMiddleware;
@@ -83,7 +86,7 @@ final class RoutingMiddlewareTest extends TestCase
         $this->router->get('/files/{name}', [TestController::class, 'show']);
 
         // A guard that checks the raw path sees "/%61dmin" as well, so it cannot be bypassed this way
-        $this->assertSame(404, $this->process('GET', '/%61dmin/users')->getStatusCode());
+        $this->assertInstanceOf(RouteNotFoundException::class, $this->rejection('GET', '/%61dmin/users'));
 
         // An escaped slash stays inside its segment and is decoded with the parameter
         $this->assertSame(200, $this->process('GET', '/files/a%2Fb')->getStatusCode());
@@ -94,16 +97,36 @@ final class RoutingMiddlewareTest extends TestCase
     {
         $this->router->get('/users/{id:\d+}', [TestController::class, 'show']);
 
-        $this->assertSame(404, $this->process('GET', '/users/1%0A')->getStatusCode());
+        $this->assertInstanceOf(RouteNotFoundException::class, $this->rejection('GET', '/users/1%0A'));
     }
 
     public function testParameterDecodingToControlCharacterIsRejected(): void
     {
         $this->router->get('/files/{name}', [TestController::class, 'show']);
 
-        $this->assertSame(400, $this->process('GET', '/files/a%00b')->getStatusCode());
-        $this->assertSame(400, $this->process('GET', '/files/a%0A')->getStatusCode());
+        $rejection = $this->rejection('GET', '/files/a%00b');
+
+        $this->assertInstanceOf(InvalidRouteParameterException::class, $rejection);
+        $this->assertSame(
+            'Route parameter "name" in GET /files/a%00b decodes to a control character',
+            $rejection->getMessage(),
+        );
+        $this->assertInstanceOf(InvalidRouteParameterException::class, $this->rejection('GET', '/files/a%0A'));
         $this->assertSame([], $this->next->requests);
+    }
+
+    public function testRejectsParameterWithIntegerKey(): void
+    {
+        $router = $this->createStub(RouterInterface::class);
+        $router->method('match')->willReturn(['handler' => 'App\\Action', 'params' => ['a%00b'], 'middlewares' => []]);
+
+        $rejection = $this->rejection('GET', '/files/a%00b', $router);
+
+        $this->assertInstanceOf(InvalidRouteParameterException::class, $rejection);
+        $this->assertSame(
+            'Route parameter "0" in GET /files/a%00b decodes to a control character',
+            $rejection->getMessage(),
+        );
     }
 
     public function testEmptyPathMatchesRoot(): void
@@ -124,35 +147,49 @@ final class RoutingMiddlewareTest extends TestCase
         );
     }
 
-    public function testReturns404WhenNothingMatches(): void
+    public function testThrowsRouteNotFoundWhenNothingMatches(): void
     {
         $this->router->get('/users', [TestController::class, 'show']);
 
-        $response = $this->process('GET', '/posts');
+        $rejection = $this->rejection('GET', '/posts');
 
-        $this->assertSame(404, $response->getStatusCode());
-        $this->assertFalse($response->hasHeader('Allow'));
+        $this->assertInstanceOf(RouteNotFoundException::class, $rejection);
+        $this->assertSame('No route matches GET /posts', $rejection->getMessage());
         $this->assertSame([], $this->next->requests);
     }
 
-    public function testReturns405WithAllowHeaderWhenOnlyTheMethodDiffers(): void
+    public function testThrowsMethodNotAllowedWhenOnlyTheMethodDiffers(): void
     {
         $this->router->get('/users', [TestController::class, 'show']);
         $this->router->post('/users', [TestController::class, 'show']);
 
-        $response = $this->process('DELETE', '/users');
+        $rejection = $this->rejection('DELETE', '/users');
 
-        $this->assertSame(405, $response->getStatusCode());
-        $this->assertSame('GET, HEAD, POST', $response->getHeaderLine('Allow'));
+        $this->assertInstanceOf(MethodNotAllowedException::class, $rejection);
+        $this->assertSame(['GET', 'HEAD', 'POST'], $rejection->getAllowedMethods());
+        $this->assertSame(
+            'Method DELETE is not allowed for /users; allowed: GET, HEAD, POST',
+            $rejection->getMessage(),
+        );
         $this->assertSame([], $this->next->requests);
     }
 
-    public function testReturns404WhenRouterCannotListAllowedMethods(): void
+    public function testRejectionNamesThePathAsSent(): void
+    {
+        $this->assertSame(
+            'No route matches GET /caf%C3%A9/%FF',
+            $this->rejection('GET', '/caf%C3%A9/%FF')->getMessage(),
+        );
+        $this->assertSame('No route matches GET /', $this->rejection('GET', 'https://example.com')->getMessage());
+        $this->assertSame('No route matches GET /posts', $this->rejection('GET', 'posts')->getMessage());
+    }
+
+    public function testThrowsRouteNotFoundWhenRouterCannotListAllowedMethods(): void
     {
         $router = $this->createStub(RouterInterface::class);
         $router->method('match')->willReturn(false);
 
-        $this->assertSame(404, $this->process('DELETE', '/users', $router)->getStatusCode());
+        $this->assertInstanceOf(RouteNotFoundException::class, $this->rejection('DELETE', '/users', $router));
     }
 
     public function testAsksRouterImplementingTheContractForAllowedMethods(): void
@@ -164,22 +201,13 @@ final class RoutingMiddlewareTest extends TestCase
         $router->method('match')->willReturn(false);
         $router->method('getAllowedMethods')->willReturn(['GET', 'HEAD']);
 
-        $response = $this->process('POST', '/users', $router);
+        $rejection = $this->rejection('POST', '/users', $router);
 
-        $this->assertSame(405, $response->getStatusCode());
-        $this->assertSame(['GET', 'HEAD'], $response->getHeader('Allow'));
+        $this->assertInstanceOf(MethodNotAllowedException::class, $rejection);
+        $this->assertSame(['GET', 'HEAD'], $rejection->getAllowedMethods());
     }
 
-    public function testFallsBackToAllowedMethodsTheRouterForwards(): void
-    {
-        $this->router->get('/users', [TestController::class, 'show']);
-
-        $decorator = new ForwardingRouter($this->router);
-
-        $this->assertSame('GET, HEAD', $this->process('DELETE', '/users', $decorator)->getHeaderLine('Allow'));
-    }
-
-    public function testIgnoresAllowedMethodsTheRouterDoesNotExpose(): void
+    public function testIgnoresAllowedMethodsOfRouterWithoutTheContract(): void
     {
         $router = new class implements RouterInterface {
             /**
@@ -206,13 +234,13 @@ final class RoutingMiddlewareTest extends TestCase
             /**
              * @return list<string>
              */
-            protected function getAllowedMethods(string $uri): array
+            public function getAllowedMethods(string $uri): array
             {
                 return ['GET'];
             }
         };
 
-        $this->assertSame(404, $this->process('DELETE', '/users', $router)->getStatusCode());
+        $this->assertInstanceOf(RouteNotFoundException::class, $this->rejection('DELETE', '/users', $router));
     }
 
     public function testRunsGroupMiddlewareThenRouteMiddlewareBeforePassingOn(): void
@@ -243,8 +271,19 @@ final class RoutingMiddlewareTest extends TestCase
 
     private function process(string $method, string $uri, ?RouterInterface $router = null): ResponseInterface
     {
-        $middleware = new RoutingMiddleware($router ?? $this->router, $this->container, new Psr17Factory());
+        $middleware = new RoutingMiddleware($router ?? $this->router, $this->container);
 
         return $middleware->process((new Psr17Factory())->createServerRequest($method, $uri), $this->next);
+    }
+
+    private function rejection(string $method, string $uri, ?RouterInterface $router = null): RoutingException
+    {
+        try {
+            $this->process($method, $uri, $router);
+        } catch (RoutingException $e) {
+            return $e;
+        }
+
+        $this->fail("$method $uri was not rejected");
     }
 }
