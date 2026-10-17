@@ -12,7 +12,7 @@ A lightweight, PSR-compliant application kernel that wires together your contain
 ## Features
 
 - PSR-15 middleware pipeline with lazy resolution from the container
-- Built-in `RoutingMiddleware`: route and group middleware, `405 Method Not Allowed` with an `Allow` header, route name and attributes on the request
+- Built-in `RoutingMiddleware`: route and group middleware, route name and attributes on the request; requests it cannot route (`404`, `405` with the allowed methods, `400`) are thrown as exceptions, answered by `RoutingErrorMiddleware` or rendered by your own error middleware
 - `Application` is itself a PSR-15 request handler: `handle()` returns the response, `run()` emits it
 - PSR-11 container integration with writable extension
 - Service providers for dependency registration
@@ -31,7 +31,7 @@ composer require solophp/application
 - A PSR-7/PSR-17 implementation (e.g., [nyholm/psr7](https://github.com/nyholm/psr7))
 - A container implementing `Solo\Contracts\Container\WritableContainerInterface`
 - An HTTP emitter implementing `Solo\Contracts\Http\EmitterInterface`
-- A router implementing `Solo\Contracts\Router\RouterInterface` (e.g., [solophp/router](https://github.com/solophp/router); 3.3+ for `405` responses, 3.4+ for route attributes)
+- A router implementing `Solo\Contracts\Router\RouterInterface`, e.g. [solophp/router](https://github.com/solophp/router) 3.5+; `405` responses also need `Solo\Contracts\Router\AllowedMethodsInterface`
 
 ## Dependencies
 
@@ -76,7 +76,7 @@ $app->run();
 new Application($config)
       │
       ├── 1. Create / accept container
-      ├── 2. Register core services (Container, RouteDispatcher, RoutingMiddleware)
+      ├── 2. Register core services (Container, RouteDispatcher, RoutingMiddleware, RoutingErrorMiddleware)
       ├── 3. Run providers          ← your dependencies
       └── 4. Load routes            ← require $config->routesPath
 
@@ -86,7 +86,7 @@ $app->run($request?)  =  emit($app->handle($request))
 ServerRequest (provided or resolved from container)
       │
       ▼
-MiddlewarePipeline ── [mw 1] → [mw 2] → … → [RoutingMiddleware] ── no route: 404 / 405
+MiddlewarePipeline ── [mw 1] → [mw 2] → … → [RoutingMiddleware] ── no route: RoutingException
                                                      │
                                                      ▼
                      request attributes: handler, params, route_name, route_attributes
@@ -110,7 +110,7 @@ ResponseInterface  →  returned by handle(), emitted by run()
 | `route_name` | `RequestAttribute::ROUTE_NAME` | `string \| null` |
 | `route_attributes` | `RequestAttribute::ROUTE_ATTRIBUTES` | `array<string,mixed>` |
 
-If `handler` is `null`, the dispatcher returns a `404` response from the response factory.
+If `handler` is `null`, the dispatcher throws `RouteNotFoundException`.
 
 ## Configuration
 
@@ -121,7 +121,7 @@ new Config(
     basePath:   '/var/www/app',
     routesPath: '/var/www/app/routes.php',
     providers:  [HttpServiceProvider::class, DatabaseServiceProvider::class],
-    middleware: [ErrorHandler::class, JsonParser::class, RoutingMiddleware::class],
+    middleware: [ErrorHandler::class, JsonParser::class, RoutingErrorMiddleware::class, RoutingMiddleware::class],
 );
 ```
 
@@ -166,18 +166,20 @@ return [
 
 ### `middleware.php`
 
-Order matters — middleware execute top-to-bottom on the way in, bottom-to-top on the way out:
+Order matters — middleware execute top-to-bottom on the way in, bottom-to-top on the way out. An exception skips the way out of every middleware it passes, so middleware that add headers to responses, such as CORS, go before every middleware that turns exceptions into responses:
 
 ```php
 <?php
 
+use Solo\Application\RoutingErrorMiddleware;
 use Solo\Application\RoutingMiddleware;
 
 return [
-    ErrorHandlerMiddleware::class,
     CorsMiddleware::class,
+    ErrorHandlerMiddleware::class,
     JsonParserMiddleware::class,
-    RoutingMiddleware::class, // last: matches the route and runs its middleware
+    RoutingErrorMiddleware::class, // answers routing errors, see Routing errors
+    RoutingMiddleware::class,      // last: matches the route and runs its middleware
 ];
 ```
 
@@ -194,7 +196,7 @@ Your providers must register these into the container:
 
 `Application` keeps the router it loaded the routes into as `$app->router` and hands that instance to `RoutingMiddleware` directly, so routing works whether or not your container shares instances. Services that need the router themselves, such as a URL generator, get it from the container, which shares it as `WritableContainerInterface` expects. If your container rebuilds services, for example after `Container::reset()`, register the loaded router for them once after construction: `$container->set(RouterInterface::class, fn() => $app->router)`.
 
-`ContainerInterface`, `WritableContainerInterface`, `Config`, `RouteDispatcher` and `RoutingMiddleware` are registered by `Application` itself.
+`ContainerInterface`, `WritableContainerInterface`, `Config`, `RouteDispatcher`, `RoutingMiddleware` and `RoutingErrorMiddleware` are registered by `Application` itself.
 
 Any middleware or controller class IDs referenced from configuration must also resolve.
 
@@ -301,8 +303,8 @@ $config = new Config(
 Add `RoutingMiddleware::class` to the middleware list. For each request it:
 
 1. matches the method and the path as the client sent it, with only percent-encoded non-ASCII bytes decoded: `/caf%C3%A9` matches a `/café` route, while escapes of ASCII characters stay, so `/%61dmin` does not match `/admin` and `%2F` never splits a segment;
-2. if no route matches, answers an empty `405 Method Not Allowed` with an `Allow` header when the path exists for other methods, and `404` otherwise; `405` needs a router that implements `Solo\Contracts\Router\AllowedMethodsInterface` (`solophp/router` 3.5+) or has a public `getAllowedMethods()` (3.3+). To customize these responses, wrap them with an error-handling middleware that inspects the status code;
-3. decodes the route parameters, answering `400 Bad Request` when one decodes to a control character such as `%00` or `%0A`, and writes `handler`, `params`, `route_name` and `route_attributes` to the request;
+2. if no route matches, throws `MethodNotAllowedException` when the path exists for other methods, and `RouteNotFoundException` otherwise; telling them apart needs a router that implements `Solo\Contracts\Router\AllowedMethodsInterface` (`solophp/router` 3.5+);
+3. decodes the route parameters, throwing `InvalidRouteParameterException` when one decodes to a control character such as `%00` or `%0A`, and writes `handler`, `params`, `route_name` and `route_attributes` to the request;
 4. runs the route's middleware — group middleware from the outermost group in, then the route's own — and passes the request on to the rest of the pipeline and the dispatcher.
 
 Route middleware use the same three forms as global middleware; `solophp/router` accepts class-strings and callables.
@@ -337,12 +339,47 @@ final class PermissionMiddleware implements MiddlewareInterface
 }
 
 // middleware.php
-return [ErrorHandlerMiddleware::class, RoutingMiddleware::class, PermissionMiddleware::class];
+return [ErrorHandlerMiddleware::class, RoutingErrorMiddleware::class, RoutingMiddleware::class, PermissionMiddleware::class];
 ```
 
-`HEAD` requests are answered by `GET` routes (`solophp/router` 3.2+); PHP itself does not send a response body for `HEAD`.
+`solophp/router` answers `HEAD` requests with `GET` routes; PHP itself does not send a response body for `HEAD`.
 
-You can still write your own routing middleware: set `RequestAttribute::HANDLER` and the decoded `RequestAttribute::PARAMS` for the dispatcher, and run route middleware with `(new MiddlewarePipeline($container, $handler))->addFromArray($middlewares)->handle($request)`.
+You can still write your own routing middleware: set `RequestAttribute::HANDLER` and the decoded `RequestAttribute::PARAMS` for the dispatcher, and run route middleware with `(new MiddlewarePipeline($container, $handler))->addFromArray($middlewares)->handle($request)`. For a request it cannot route, throw one of the exceptions below; one passed on without a handler makes the dispatcher throw `RouteNotFoundException`.
+
+### Routing errors
+
+`RouteNotFoundException` (`404`), `MethodNotAllowedException` (`405`; `getAllowedMethods()` lists the methods) and `InvalidRouteParameterException` (`400`) extend `Solo\Application\Exception\RoutingException`. It carries the status (`getStatusCode()`, also the exception code) and the headers the response must carry (`getHeaders()`, such as `Allow`), and `applyTo($response)` puts both on a response.
+
+List `RoutingErrorMiddleware` right before `RoutingMiddleware` to answer them with an empty response of that status and those headers. The middleware in front of it see that response like any other.
+
+To answer them in your own format, catch them in your error middleware instead and leave `RoutingErrorMiddleware` out:
+
+```php
+use Solo\Application\Exception\RoutingException;
+
+final class ErrorHandlerMiddleware implements MiddlewareInterface
+{
+    public function __construct(private readonly ResponseFactoryInterface $responses)
+    {
+    }
+
+    public function process(
+        ServerRequestInterface $request,
+        RequestHandlerInterface $handler,
+    ): ResponseInterface {
+        try {
+            return $handler->handle($request);
+        } catch (RoutingException $e) {
+            $response = $this->responses->createResponse()->withHeader('Content-Type', 'application/json');
+            $response->getBody()->write(json_encode(['error' => $e->getStatusCode()], JSON_THROW_ON_ERROR));
+
+            return $e->applyTo($response);
+        }
+    }
+}
+```
+
+`Application::handle()` answers a `RoutingException` that nothing caught with the `RoutingErrorMiddleware` from the container, outside every middleware, so none of them see that response.
 
 ## Route Handlers
 
@@ -360,7 +397,7 @@ final class UserController
     public function show(ServerRequestInterface $request, ResponseInterface $response, array $params): ResponseInterface
     {
         $user = $this->users->find($params['id']);
-        $response->getBody()->write(json_encode($user));
+        $response->getBody()->write(json_encode($user, JSON_THROW_ON_ERROR));
         return $response->withHeader('Content-Type', 'application/json');
     }
 }
@@ -428,7 +465,9 @@ The container must implement `Solo\Contracts\Container\WritableContainerInterfac
 | `Application` | Bootstraps the application; PSR-15 handler (`handle()`) and `run()` to emit |
 | `Config` | Immutable configuration DTO |
 | `MiddlewarePipeline` | Reusable PSR-15 middleware pipeline (acts as both pipeline and `RequestHandlerInterface`) |
-| `RoutingMiddleware` | Matches the route, answers 404/405, runs route middleware |
+| `RoutingMiddleware` | Matches the route, runs route middleware, throws a `RoutingException` when it cannot |
+| `RoutingErrorMiddleware` | Answers a `RoutingException` with an empty response of its status and headers |
+| `Exception\RoutingException` | Base of `RouteNotFoundException`, `MethodNotAllowedException` and `InvalidRouteParameterException`; `applyTo()` puts its status and headers on a response |
 | `RouteDispatcher` | Resolves and invokes the matched route handler |
 | `RequestAttribute` | Names of the request attributes used for routing |
 
@@ -461,6 +500,17 @@ composer stan    # phpstan
 composer cs      # phpcs (PSR-12)
 composer check   # all of the above
 ```
+
+## Upgrading from 3.x
+
+4.0 changes how a request that reaches no route is answered:
+
+- `RoutingMiddleware` throws `RouteNotFoundException`, `MethodNotAllowedException` or `InvalidRouteParameterException` instead of returning an empty `404`, `405` or `400`, and `RouteDispatcher` throws `RouteNotFoundException` instead of returning `404` for a request without a handler. List `RoutingErrorMiddleware` right before `RoutingMiddleware` to keep the empty responses, or catch `RoutingException` in your error middleware to render them; see [Routing errors](#routing-errors).
+- With neither in the list, `Application::handle()` answers them outside every middleware: middleware that add headers or log on the way out, such as CORS, security headers or an access log, no longer see `404`, `405` and `400` responses.
+- An error middleware that catches every `Throwable` now sees these exceptions as well, unless `RoutingErrorMiddleware` is listed after it. Handle `RoutingException` first, or a `404` becomes a `500`; one that takes the status from `getCode()` gets the status right but has to add `getHeaders()`, or a `405` goes out without `Allow`.
+- A middleware that customized `404` or `405` by checking the status of the response it got back no longer sees them: catch `RoutingException` instead.
+- `RoutingMiddleware` no longer takes a `ResponseFactoryInterface`; its constructor is `(RouterInterface $router, ContainerInterface $container)`.
+- `405` needs a router that implements `AllowedMethodsInterface`; a public `getAllowedMethods()` alone is no longer used, so a router decorator has to implement the interface and forward it. `solophp/router` below 3.5 conflicts.
 
 ## License
 

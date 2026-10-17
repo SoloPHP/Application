@@ -29,9 +29,12 @@
     "psr/http-factory": "^1.1",
     "solophp/contracts": "^1.5"
   },
+  "conflict": {
+    "solophp/router": "<3.5"
+  },
   "suggest": {
     "solophp/container": "Default container implementation",
-    "solophp/router": "Default router implementation (3.3+ for 405 Method Not Allowed, 3.4+ for route attributes)",
+    "solophp/router": "Default router implementation",
     "solophp/http-emitter": "Default HTTP emitter implementation",
     "nyholm/psr7": "PSR-7/PSR-17 implementation",
     "nyholm/psr7-server": "ServerRequest creator from globals"
@@ -41,7 +44,7 @@
     "squizlabs/php_codesniffer": "^4.0",
     "phpstan/phpstan": "^2.0",
     "solophp/container": "^2.1 || ^3.0",
-    "solophp/router": "^3.4",
+    "solophp/router": "^3.5",
     "nyholm/psr7": "^1.8.2"
   },
   "scripts": {

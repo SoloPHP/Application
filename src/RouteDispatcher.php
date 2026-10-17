@@ -10,6 +10,7 @@ use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Solo\Application\Exception\RouteNotFoundException;
 use UnexpectedValueException;
 
 final readonly class RouteDispatcher implements RequestHandlerInterface
@@ -25,7 +26,7 @@ final readonly class RouteDispatcher implements RequestHandlerInterface
         $handler = $request->getAttribute(RequestAttribute::HANDLER);
 
         if ($handler === null) {
-            return $this->responseFactory->createResponse(404);
+            throw new RouteNotFoundException($request->getMethod(), RequestPath::sent($request));
         }
 
         $callable = CallableResolver::resolve($this->container, $handler);

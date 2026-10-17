@@ -11,6 +11,7 @@ use PHPUnit\Framework\TestCase;
 use Psr\Container\ContainerInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use Solo\Application\Exception\RouteNotFoundException;
 use Solo\Application\RequestAttribute;
 use Solo\Application\RouteDispatcher;
 use Solo\Application\Tests\Fixtures\TestController;
@@ -25,9 +26,21 @@ final class RouteDispatcherTest extends TestCase
         $this->container = $this->createStub(ContainerInterface::class);
     }
 
-    public function testHandleReturns404WhenNoHandler(): void
+    public function testHandleThrowsRouteNotFoundWhenNoHandler(): void
     {
-        $this->assertSame(404, $this->dispatch(null)->getStatusCode());
+        $this->expectException(RouteNotFoundException::class);
+        $this->expectExceptionMessage('No route matches GET /');
+
+        $this->dispatch(null);
+    }
+
+    public function testNamesAnEmptyPathAsRoot(): void
+    {
+        $this->expectException(RouteNotFoundException::class);
+        $this->expectExceptionMessageMatches('#^No route matches GET /$#');
+
+        (new RouteDispatcher($this->container, new Psr17Factory()))
+            ->handle((new Psr17Factory())->createServerRequest('GET', 'https://example.com'));
     }
 
     public function testHandleWithArrayHandlerResolvesControllerFromContainer(): void

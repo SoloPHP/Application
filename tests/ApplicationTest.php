@@ -169,6 +169,16 @@ final class ApplicationTest extends TestCase
         $this->assertSame($response, $app->handle($request));
     }
 
+    public function testHandleLetsOtherExceptionsThrough(): void
+    {
+        $request = $this->createRequestWithRoute(fn() => throw new RuntimeException('Handler failed'));
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Handler failed');
+
+        (new Application($this->createConfig(), $this->createContainer()))->handle($request);
+    }
+
     public function testRunUsesRequestFromContainerWhenNotProvided(): void
     {
         $response = $this->createStub(ResponseInterface::class);
