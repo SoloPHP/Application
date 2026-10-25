@@ -17,12 +17,14 @@ final class ConfigTest extends TestCase
             routesPath: '/app/routes.php',
             providers: [HttpServiceProvider::class],
             middleware: ['Middleware1', 'Middleware2'],
+            routesCachePath: '/app/var/routes.php',
         );
 
         $this->assertSame('/app', $config->basePath);
         $this->assertSame('/app/routes.php', $config->routesPath);
         $this->assertSame([HttpServiceProvider::class], $config->providers);
         $this->assertSame(['Middleware1', 'Middleware2'], $config->middleware);
+        $this->assertSame('/app/var/routes.php', $config->routesCachePath);
     }
 
     public function testConfigWithEmptyArrays(): void
@@ -38,5 +40,6 @@ final class ConfigTest extends TestCase
         $this->assertSame('/var/www/routes.php', $config->routesPath);
         $this->assertSame([], $config->providers);
         $this->assertSame([], $config->middleware);
+        $this->assertNull($config->routesCachePath);
     }
 }

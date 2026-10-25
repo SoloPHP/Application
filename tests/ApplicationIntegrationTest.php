@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Solo\Application\Tests;
 
+use LogicException;
 use Nyholm\Psr7\Factory\Psr17Factory;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
@@ -23,8 +24,8 @@ use Solo\Application\Tests\Fixtures\SpyEmitter;
 use Solo\Application\Tests\Fixtures\TraceMiddleware;
 use Solo\Contracts\Container\WritableContainerInterface;
 use Solo\Contracts\Http\EmitterInterface;
-use Solo\Contracts\Router\RouterInterface;
-use Solo\Router\RouteCollector;
+use Solo\Router\Results\Matched;
+use Solo\Router\Router;
 
 /**
  * The whole stack: solophp/container, solophp/router, nyholm/psr7 and the routes in Fixtures/routes.php.
@@ -180,9 +181,56 @@ final class ApplicationIntegrationTest extends TestCase
     {
         $app = $this->app();
 
-        $this->assertNotFalse($app->router->match('GET', '/users/1'));
-        $this->assertSame($app->router, $app->container->get(RouterInterface::class));
-        $this->assertSame($app->router, $app->container->get(RouteCollector::class));
+        $this->assertInstanceOf(Matched::class, $app->router->resolve('GET', '/users/1'));
+        $this->assertSame($app->router, $app->container->get(Router::class));
+    }
+
+    public function testServesRequestsFromTheRouteCache(): void
+    {
+        $cache = sys_get_temp_dir() . '/routes_cache_' . uniqid() . '.php';
+
+        try {
+            $this->app(routesPath: __DIR__ . '/Fixtures/cacheable-routes.php', routesCachePath: $cache);
+            // Boots from the file written above: the routes file is not even looked up
+            $app = $this->app(
+                middleware: ['trace.global', RoutingMiddleware::class, 'trace.after'],
+                routesPath: '/nonexistent/routes.php',
+                routesCachePath: $cache,
+            );
+
+            $user = $app->handle($this->request('GET', '/users/j%C3%B6rg'));
+            $report = $app->handle($this->request('GET', '/admin/reports/daily'));
+            $invoice = $app->handle($this->request('GET', '/billing/invoices/42'));
+            $notAllowed = $app->handle($this->request('POST', '/users/1'));
+        } finally {
+            @unlink($cache);
+        }
+
+        $this->assertSame('user jörg', (string) $user->getBody());
+        $this->assertSame('global>outer>inner>route>after>handler', (string) $report->getBody());
+        $this->assertSame(
+            ['name' => 'invoices.show', 'attributes' => ['permission' => 'billing.view', 'plan' => 'pro']],
+            json_decode((string) $invoice->getBody(), true),
+        );
+        $this->assertSame([405, 'GET, HEAD'], [$notAllowed->getStatusCode(), $notAllowed->getHeaderLine('Allow')]);
+    }
+
+    public function testRouteCacheRejectsRoutesItCannotExport(): void
+    {
+        $cache = sys_get_temp_dir() . '/routes_cache_' . uniqid() . '.php';
+
+        try {
+            $this->app(routesCachePath: $cache);
+            $this->fail('Routes with closures and objects were cached');
+        } catch (LogicException $e) {
+            $this->assertSame(
+                "Route 'GET /closure' cannot be exported: its middleware contains Closure; "
+                    . 'only scalars, null, arrays and enums can be exported',
+                $e->getMessage(),
+            );
+        }
+
+        $this->assertFileDoesNotExist($cache);
     }
 
     public function testRoutesSurviveContainerWithoutSharedInstances(): void
@@ -227,13 +275,16 @@ final class ApplicationIntegrationTest extends TestCase
     private function app(
         ?WritableContainerInterface $container = null,
         array $middleware = ['trace.global', RoutingMiddleware::class],
+        string $routesPath = __DIR__ . '/Fixtures/routes.php',
+        ?string $routesCachePath = null,
     ): Application {
         return new Application(
             new Config(
                 basePath: dirname(__DIR__),
-                routesPath: __DIR__ . '/Fixtures/routes.php',
+                routesPath: $routesPath,
                 providers: [HttpServiceProvider::class],
                 middleware: $middleware,
+                routesCachePath: $routesCachePath,
             ),
             $container,
         );

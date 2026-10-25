@@ -13,7 +13,9 @@ use Psr\Http\Server\RequestHandlerInterface;
 use RuntimeException;
 use Solo\Contracts\Container\WritableContainerInterface;
 use Solo\Contracts\Http\EmitterInterface;
-use Solo\Contracts\Router\RouterInterface;
+use Solo\Router\RouteCache;
+use Solo\Router\RouteCollector;
+use Solo\Router\Router;
 use UnexpectedValueException;
 
 final readonly class Application implements RequestHandlerInterface
@@ -21,7 +23,7 @@ final readonly class Application implements RequestHandlerInterface
     public WritableContainerInterface $container;
 
     /** The router holding the routes; RoutingMiddleware gets it directly, not through the container */
-    public RouterInterface $router;
+    public Router $router;
 
     public function __construct(
         public Config $config,
@@ -30,7 +32,9 @@ final readonly class Application implements RequestHandlerInterface
         $this->container = $container ?? $this->createDefaultContainer();
         $this->registerCoreServices();
         $this->registerProviders();
-        $this->router = $this->loadRoutes();
+        $this->router = $this->loadRouter();
+        // Registered once it exists, for services that need it, such as a URL generator
+        $this->container->set(Router::class, fn() => $this->router);
     }
 
     private function createDefaultContainer(): WritableContainerInterface
@@ -88,7 +92,21 @@ final readonly class Application implements RequestHandlerInterface
         }
     }
 
-    private function loadRoutes(): RouterInterface
+    private function loadRouter(): Router
+    {
+        $cachePath = $this->config->routesCachePath;
+        if ($cachePath !== null) {
+            // The routes file runs only when the cache file has to be written
+            return (new RouteCache($cachePath))->load($this->registerRoutes(...));
+        }
+
+        $routes = new RouteCollector();
+        $this->registerRoutes($routes);
+
+        return $routes->build();
+    }
+
+    private function registerRoutes(RouteCollector $routes): void
     {
         $path = $this->config->routesPath;
         // Found the way require finds it: a relative path is looked up in the include path
@@ -99,21 +117,18 @@ final readonly class Application implements RequestHandlerInterface
         }
 
         // A static closure keeps $this, and with it the application's internals, out of the routes file
-        $routes = (static fn(): mixed => require $file)();
+        $register = (static fn(): mixed => require $file)();
 
-        if (!is_callable($routes)) {
+        if (!is_callable($register)) {
             throw new UnexpectedValueException(sprintf(
                 'Routes file %s must return a callable, %s returned',
                 $path,
-                get_debug_type($routes)
+                get_debug_type($register)
             ));
         }
 
-        $router = $this->container->get(RouterInterface::class);
         // The container stands in for $this: routes can reach services and Config through it
-        $routes($router, $this->container);
-
-        return $router;
+        $register($routes, $this->container);
     }
 
     public function handle(ServerRequestInterface $request): ResponseInterface
