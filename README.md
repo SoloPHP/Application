@@ -7,17 +7,18 @@
 
 Application bootstrap with PSR-15 middleware pipeline.
 
-A lightweight, PSR-compliant application kernel that wires together your container, router, middleware, and HTTP layer with zero framework lock-in.
+A lightweight, PSR-compliant application kernel that wires together your container, middleware, and HTTP layer with [solophp/router](https://github.com/solophp/router).
 
 ## Features
 
 - PSR-15 middleware pipeline with lazy resolution from the container
 - Built-in `RoutingMiddleware`: route and group middleware, route name and attributes on the request; requests it cannot route (`404`, `405` with the allowed methods, `400`) are thrown as exceptions, answered by `RoutingErrorMiddleware` or rendered by your own error middleware
+- Route cache: the built router is kept in a PHP file that OPcache holds in memory, so a request skips registering and compiling routes
 - `Application` is itself a PSR-15 request handler: `handle()` returns the response, `run()` emits it
 - PSR-11 container integration with writable extension
 - Service providers for dependency registration
 - Handlers: controller methods, invokable classes, any callable
-- Built only on PSR interfaces and `solophp/contracts`
+- Built on PSR interfaces, `solophp/contracts` and `solophp/router`
 
 ## Installation
 
@@ -27,11 +28,10 @@ composer require solophp/application
 
 ## Requirements
 
-- PHP 8.2+
+- PHP 8.3+
 - A PSR-7/PSR-17 implementation (e.g., [nyholm/psr7](https://github.com/nyholm/psr7))
 - A container implementing `Solo\Contracts\Container\WritableContainerInterface`
 - An HTTP emitter implementing `Solo\Contracts\Http\EmitterInterface`
-- A router implementing `Solo\Contracts\Router\RouterInterface`, e.g. [solophp/router](https://github.com/solophp/router) 3.5+; `405` responses also need `Solo\Contracts\Router\AllowedMethodsInterface`
 
 ## Dependencies
 
@@ -42,7 +42,8 @@ composer require solophp/application
 | psr/http-server-handler | Request handler |
 | psr/http-server-middleware | Middleware |
 | psr/http-factory | Response factory |
-| solophp/contracts (^1.5) | `WritableContainerInterface`, `EmitterInterface`, `RouterInterface`, `AllowedMethodsInterface` |
+| solophp/contracts (^1.1) | `WritableContainerInterface`, `EmitterInterface` |
+| solophp/router (^4.0) | Route definitions, compiled matching, route cache |
 
 ## Quick Start
 
@@ -78,7 +79,8 @@ new Application($config)
       ├── 1. Create / accept container
       ├── 2. Register core services (Container, RouteDispatcher, RoutingMiddleware, RoutingErrorMiddleware)
       ├── 3. Run providers          ← your dependencies
-      └── 4. Load routes            ← require $config->routesPath
+      └── 4. Build the router       ← $config->routesPath, or load it from $config->routesCachePath,
+                                      and register it as Solo\Router\Router
 
 $app->run($request?)  =  emit($app->handle($request))
       │
@@ -122,6 +124,7 @@ new Config(
     routesPath: '/var/www/app/routes.php',
     providers:  [HttpServiceProvider::class, DatabaseServiceProvider::class],
     middleware: [ErrorHandler::class, JsonParser::class, RoutingErrorMiddleware::class, RoutingMiddleware::class],
+    routesCachePath: '/var/www/app/var/cache/routes.php', // optional, see Route cache
 );
 ```
 
@@ -129,7 +132,7 @@ new Config(
 
 ### `routes.php`
 
-Returns a callable that receives the router registered as `RouterInterface` and the container. Type-hint `RouteCollector` to use the fluent API of `solophp/router`:
+Returns a callable that receives a `Solo\Router\RouteCollector` and the container. `Application` builds the router from the collector once the callable returns:
 
 ```php
 <?php
@@ -150,7 +153,29 @@ return function (RouteCollector $r, ContainerInterface $container): void {
 };
 ```
 
-The file is loaded in its own scope, so `$this` is not available: reach services or `Config` through the container instead. `routesPath` is found the way `require` finds files, so a relative path is looked up in the include path. A missing file throws `RuntimeException`, a file that does not return a callable throws `UnexpectedValueException`.
+The file is loaded in its own scope, so `$this` is not available: reach services or `Config` through the container instead. `routesPath` is found the way `require` finds files, so a relative path is looked up in the include path. A missing file throws `RuntimeException`, a file that does not return a callable throws `UnexpectedValueException`. Invalid routes, such as a duplicate name, throw when the router is built, during the constructor.
+
+Keep the file to route definitions: with the route cache it runs only when the cache file is written, so services it registered would be missing on later boots.
+
+### Route cache
+
+Without a cache, every boot registers the routes and compiles their patterns into the router — under PHP-FPM, on every request. Set `routesCachePath` to keep the built router in a PHP file instead:
+
+```php
+new Config(
+    /* … */,
+    routesCachePath: $basePath . '/var/cache/routes.php',
+);
+```
+
+The first boot runs `routes.php`, builds the router and writes the file, creating its directory if needed. Later boots load the router from the file — from OPcache when it is enabled — without running `routes.php`.
+
+- The file is not compared with `routes.php`: delete it whenever the routes change, for example in your deploy script, and leave `routesCachePath` unset during development.
+- Handlers, middleware and attributes have to be plain values: strings, numbers, booleans, `null`, arrays and enums, such as `[UserController::class, 'show']` or `AuthMiddleware::class`. A closure or an object makes the constructor throw `LogicException` naming the route, and no file is written.
+- Keep the file outside the web root, in a directory only the application can write: it is executed as PHP.
+- Use an absolute path: a relative one is resolved against the working directory, which differs between PHP-FPM and the CLI, so each would keep a file of its own.
+
+See the [solophp/router cache guide](https://solophp.github.io/Router/features/caching) for details.
 
 ### `providers.php`
 
@@ -191,12 +216,11 @@ Your providers must register these into the container:
 |-----------|-----------|
 | `Psr\Http\Message\ResponseFactoryInterface` | PSR-17 response factory |
 | `Psr\Http\Message\ServerRequestInterface` | The incoming request (used when `run()` is called without an argument) |
-| `Solo\Contracts\Router\RouterInterface` | Router; `routes.php` is called with this |
 | `Solo\Contracts\Http\EmitterInterface` | Sends the response back to the client (used by `run()`) |
 
-`Application` keeps the router it loaded the routes into as `$app->router` and hands that instance to `RoutingMiddleware` directly, so routing works whether or not your container shares instances. Services that need the router themselves, such as a URL generator, get it from the container, which shares it as `WritableContainerInterface` expects. If your container rebuilds services, for example after `Container::reset()`, register the loaded router for them once after construction: `$container->set(RouterInterface::class, fn() => $app->router)`.
+`Application` builds the router itself and keeps it as `$app->router` (`Solo\Router\Router`). It hands that instance to `RoutingMiddleware` directly and registers it in the container as `Solo\Router\Router` once the providers have run, for services that need it, such as a URL generator using `getRouteByName()`. Resolve it lazily, in a factory, not inside `register()`.
 
-`ContainerInterface`, `WritableContainerInterface`, `Config`, `RouteDispatcher`, `RoutingMiddleware` and `RoutingErrorMiddleware` are registered by `Application` itself.
+`ContainerInterface`, `WritableContainerInterface`, `Config`, `Router`, `RouteDispatcher`, `RoutingMiddleware` and `RoutingErrorMiddleware` are registered by `Application` itself.
 
 Any middleware or controller class IDs referenced from configuration must also resolve.
 
@@ -216,9 +240,7 @@ use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Solo\Contracts\Container\WritableContainerInterface;
 use Solo\Contracts\Http\EmitterInterface;
-use Solo\Contracts\Router\RouterInterface;
 use Solo\HttpEmitter\Emitter;
-use Solo\Router\RouteCollector;
 
 final class HttpServiceProvider
 {
@@ -236,12 +258,6 @@ final class HttpServiceProvider
             return (new ServerRequestCreator($factory, $factory, $factory, $factory))
                 ->fromGlobals();
         });
-
-        $container->set(RouterInterface::class, fn() => new RouteCollector());
-
-        // Alias, not a second factory: services that type-hint RouteCollector (e.g. for URL generation)
-        // get the same router as RouterInterface
-        $container->set(RouteCollector::class, fn(ContainerInterface $c) => $c->get(RouterInterface::class));
 
         $container->set(EmitterInterface::class, fn() => new Emitter());
     }
@@ -303,11 +319,11 @@ $config = new Config(
 Add `RoutingMiddleware::class` to the middleware list. For each request it:
 
 1. matches the method and the path as the client sent it, with only percent-encoded non-ASCII bytes decoded: `/caf%C3%A9` matches a `/café` route, while escapes of ASCII characters stay, so `/%61dmin` does not match `/admin` and `%2F` never splits a segment;
-2. if no route matches, throws `MethodNotAllowedException` when the path exists for other methods, and `RouteNotFoundException` otherwise; telling them apart needs a router that implements `Solo\Contracts\Router\AllowedMethodsInterface` (`solophp/router` 3.5+);
+2. if no route matches, throws `MethodNotAllowedException` when the path exists for other methods, and `RouteNotFoundException` otherwise;
 3. decodes the route parameters, throwing `InvalidRouteParameterException` when one decodes to a control character such as `%00` or `%0A`, and writes `handler`, `params`, `route_name` and `route_attributes` to the request;
 4. runs the route's middleware — group middleware from the outermost group in, then the route's own — and passes the request on to the rest of the pipeline and the dispatcher.
 
-Route middleware use the same three forms as global middleware; `solophp/router` accepts class-strings and callables.
+Route middleware use the same three forms as global middleware; `solophp/router` accepts class-strings and callables, and the route cache only class-strings and other container IDs.
 
 Middleware before `RoutingMiddleware` see the same path structure as the router, so a check on `$request->getUri()->getPath()` cannot be bypassed with escapes such as `/%61dmin`. Parameters, though, are decoded: `/files/a%2Fb` gives `name` = `a/b` for `/files/{name}`, so validate parameters before building file paths from them.
 
@@ -503,14 +519,23 @@ composer check   # all of the above
 
 ## Upgrading from 3.x
 
-4.0 changes how a request that reaches no route is answered:
+4.0 requires PHP 8.3 or later, builds the router with `solophp/router` 4 instead of taking it from the container, and throws routing errors instead of answering them with empty responses. Projects on PHP 8.2 can stay on 3.x.
+
+### Router
+
+- `solophp/router` `^4.0` is now a dependency: raise your own `solophp/router` requirement to `^4.0` or drop it. The router contracts of `solophp/contracts` are no longer used. `Application` creates the `RouteCollector`, builds the router and registers it as `Solo\Router\Router`: remove the `RouterInterface` and `RouteCollector` bindings from your providers.
+- A service that took `RouteCollector` or `RouterInterface` from the container, for example to generate URLs, has to take `Solo\Router\Router` and use `getRouteByName()`; a `RouteCollector` binding left in a provider would now give it an empty collector.
+- `routes.php` receives a `Solo\Router\RouteCollector`: change callables type-hinted with `RouterInterface`. Route definitions follow `solophp/router` 4; see its [migration guide](https://solophp.github.io/Router/guide/migration-v4).
+- `$app->router` is a `Solo\Router\Router` with `resolve()`, `getRouteByName()`, `getRoutes()` and `getAllowedMethods()`. Invalid routes, such as a duplicate name, throw in the constructor of `Application`.
+- `RoutingMiddleware`'s constructor is `(Router $router, ContainerInterface $container)`: it takes the built router and no longer takes a `ResponseFactoryInterface`. To route with another router, list your own routing middleware instead; see [Routing](#routing).
+- New: `Config::$routesCachePath`, see [Route cache](#route-cache).
+
+### Routing exceptions
 
 - `RoutingMiddleware` throws `RouteNotFoundException`, `MethodNotAllowedException` or `InvalidRouteParameterException` instead of returning an empty `404`, `405` or `400`, and `RouteDispatcher` throws `RouteNotFoundException` instead of returning `404` for a request without a handler. List `RoutingErrorMiddleware` right before `RoutingMiddleware` to keep the empty responses, or catch `RoutingException` in your error middleware to render them; see [Routing errors](#routing-errors).
 - With neither in the list, `Application::handle()` answers them outside every middleware: middleware that add headers or log on the way out, such as CORS, security headers or an access log, no longer see `404`, `405` and `400` responses.
 - An error middleware that catches every `Throwable` now sees these exceptions as well, unless `RoutingErrorMiddleware` is listed after it. Handle `RoutingException` first, or a `404` becomes a `500`; one that takes the status from `getCode()` gets the status right but has to add `getHeaders()`, or a `405` goes out without `Allow`.
 - A middleware that customized `404` or `405` by checking the status of the response it got back no longer sees them: catch `RoutingException` instead.
-- `RoutingMiddleware` no longer takes a `ResponseFactoryInterface`; its constructor is `(RouterInterface $router, ContainerInterface $container)`.
-- `405` needs a router that implements `AllowedMethodsInterface`; a public `getAllowedMethods()` alone is no longer used, so a router decorator has to implement the interface and forward it. `solophp/router` below 3.5 conflicts.
 
 ## License
 

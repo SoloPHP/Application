@@ -13,20 +13,20 @@ use Solo\Application\Exception\InvalidRouteParameterException;
 use Solo\Application\Exception\MethodNotAllowedException;
 use Solo\Application\Exception\RouteNotFoundException;
 use Solo\Application\Exception\RoutingException;
-use Solo\Contracts\Router\AllowedMethodsInterface;
-use Solo\Contracts\Router\RouterInterface;
+use Solo\Router\Results\MethodNotAllowed;
+use Solo\Router\Results\NotFound;
+use Solo\Router\Router;
 
 /**
  * Matches the request, stores the route in request attributes and runs the route's
  * own middleware (group middleware first) before passing the request on.
  *
- * Throws a RoutingException for a request it cannot route; telling 405 from 404 needs
- * a router that implements AllowedMethodsInterface.
+ * Throws a RoutingException for a request it cannot route.
  */
 final readonly class RoutingMiddleware implements MiddlewareInterface
 {
     public function __construct(
-        private RouterInterface $router,
+        private Router $router,
         private ContainerInterface $container,
     ) {
     }
@@ -38,35 +38,32 @@ final readonly class RoutingMiddleware implements MiddlewareInterface
     {
         $method = $request->getMethod();
         $sentPath = RequestPath::sent($request);
-        $path = self::decodeNonAscii($sentPath);
-        $match = $this->router->match($method, $path);
+        $result = $this->router->resolve($method, self::decodeNonAscii($sentPath));
 
-        if ($match === false) {
-            $allowed = $this->router instanceof AllowedMethodsInterface ? $this->router->getAllowedMethods($path) : [];
-
-            if ($allowed === []) {
-                throw new RouteNotFoundException($method, $sentPath);
-            }
-
-            throw new MethodNotAllowedException($method, $sentPath, $allowed);
+        if ($result instanceof NotFound) {
+            throw new RouteNotFoundException($method, $sentPath);
+        }
+        if ($result instanceof MethodNotAllowed) {
+            throw new MethodNotAllowedException($method, $sentPath, $result->allowedMethods);
         }
 
-        $params = array_map(rawurldecode(...), $match['params']);
+        $params = array_map(rawurldecode(...), $result->params);
 
         foreach ($params as $name => $value) {
             if (preg_match('/[\x00-\x1F\x7F]/', $value) === 1) {
-                throw new InvalidRouteParameterException($method, $sentPath, (string) $name);
+                throw new InvalidRouteParameterException($method, $sentPath, $name);
             }
         }
 
+        $route = $result->route;
         $request = $request
-            ->withAttribute(RequestAttribute::HANDLER, $match['handler'])
+            ->withAttribute(RequestAttribute::HANDLER, $route->handler)
             ->withAttribute(RequestAttribute::PARAMS, $params)
-            ->withAttribute(RequestAttribute::ROUTE_NAME, $match['name'] ?? null)
-            ->withAttribute(RequestAttribute::ROUTE_ATTRIBUTES, $match['attributes'] ?? []);
+            ->withAttribute(RequestAttribute::ROUTE_NAME, $route->name)
+            ->withAttribute(RequestAttribute::ROUTE_ATTRIBUTES, $route->attributes);
 
         return (new MiddlewarePipeline($this->container, $handler))
-            ->addFromArray($match['middlewares'])
+            ->addFromArray($route->middlewares)
             ->handle($request);
     }
 

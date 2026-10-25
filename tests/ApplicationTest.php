@@ -17,11 +17,11 @@ use Solo\Application\Application;
 use Solo\Application\Config;
 use Solo\Application\RequestAttribute;
 use Solo\Application\Tests\Fixtures\HttpServiceProvider;
+use Solo\Application\Tests\Fixtures\SpyEmitter;
 use Solo\Container\Container;
 use Solo\Contracts\Container\WritableContainerInterface;
 use Solo\Contracts\Http\EmitterInterface;
-use Solo\Contracts\Router\RouterInterface;
-use Solo\Router\RouteCollector;
+use Solo\Router\Results\Matched;
 use UnexpectedValueException;
 
 final class ApplicationTest extends TestCase
@@ -60,7 +60,7 @@ final class ApplicationTest extends TestCase
     {
         $app = new Application($this->createConfig(providers: [HttpServiceProvider::class]), new Container());
 
-        $this->assertInstanceOf(RouteCollector::class, $app->container->get(RouterInterface::class));
+        $this->assertInstanceOf(SpyEmitter::class, $app->container->get(EmitterInterface::class));
     }
 
     public function testConstructorRejectsProviderWithoutRegisterMethod(): void
@@ -159,6 +159,29 @@ final class ApplicationTest extends TestCase
         $this->assertTrue($container->get('loaded'));
     }
 
+    public function testRoutesFileRunsOnlyWhenTheRouteCacheIsWritten(): void
+    {
+        $cache = sys_get_temp_dir() . '/test_routes_cache_' . uniqid() . '.php';
+        $this->routesFiles[] = $cache;
+        $routes = <<<'PHP'
+            <?php return function ($router, $container): void {
+                $router->get('/users/{id}', 'App\ShowUser');
+                $container->set('from.routes', fn() => true);
+            };
+            PHP;
+        $config = $this->createConfig(routes: $routes, routesCachePath: $cache);
+
+        new Application($config, $writing = $this->createContainer());
+        $app = new Application($config, $reading = $this->createContainer());
+
+        $this->assertTrue($writing->has('from.routes'));
+        $this->assertFalse($reading->has('from.routes'));
+        $result = $app->router->resolve('GET', '/users/7');
+        $this->assertInstanceOf(Matched::class, $result);
+        $this->assertSame('App\ShowUser', $result->route->handler);
+        $this->assertSame(['id' => '7'], $result->params);
+    }
+
     public function testHandleReturnsResponseWithoutEmitting(): void
     {
         $response = $this->createStub(ResponseInterface::class);
@@ -239,6 +262,7 @@ final class ApplicationTest extends TestCase
         array $providers = [],
         array $middleware = [],
         string $routes = '<?php return function ($router): void {};',
+        ?string $routesCachePath = null,
     ): Config {
         $routesFile = sys_get_temp_dir() . '/test_routes_' . uniqid() . '.php';
         file_put_contents($routesFile, $routes);
@@ -249,6 +273,7 @@ final class ApplicationTest extends TestCase
             routesPath: $routesFile,
             providers: $providers,
             middleware: $middleware,
+            routesCachePath: $routesCachePath,
         );
     }
 
@@ -257,7 +282,6 @@ final class ApplicationTest extends TestCase
         ?EmitterInterface $emitter = null,
     ): WritableContainerInterface {
         $container = new Container();
-        $container->set(RouterInterface::class, fn() => new RouteCollector());
         $container->set(ResponseFactoryInterface::class, fn() => new Psr17Factory());
         if ($request !== null) {
             $container->set(ServerRequestInterface::class, fn() => $request);
